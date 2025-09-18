@@ -10,7 +10,7 @@ from tqdm import tqdm  # progress bar
 pillow_heif.register_heif_opener()
 
 # Input and Output paths
-path_to_process = r"C:\Users\stevi\Desktop\to_sort"
+path_to_process = r"C:\Users\stevi\Desktop\XX Scans"
 output_path = r"C:\Users\stevi\Desktop\Organised Photos"
 unprocessable_path = r"C:\Users\stevi\Desktop\Unprocessed Photos"
 

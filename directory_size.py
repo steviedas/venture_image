@@ -1,7 +1,7 @@
 import os
 
 # Folder to calculate size for
-path_to_process = r"C:\Users\stevi\Desktop\to_sort"
+path_to_process = r"C:\Users\stevi\Desktop\Organised Photos\2019"
 
 def get_folder_size_and_count(path):
     total_size = 0
