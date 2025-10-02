@@ -1,0 +1,49 @@
+services:
+  api:
+    profiles: ["prod"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: venture-image:latest
+    container_name: venture-image-api
+    ports: ["8000:8000"]
+    environment:
+      VI_INPUT_ROOT: /data/input
+      VI_OUTPUT_ROOT: /data/output
+      VI_DEBUG: "false"
+    volumes:
+      - ./data/input:/data/input
+      - ./data/output:/data/output
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
+      interval: 2m
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  api-dev:
+    profiles: ["dev"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: venture-image:dev
+    container_name: venture-image-api-dev
+    ports: ["8001:8000"]
+    environment:
+      VI_INPUT_ROOT: /data/input
+      VI_OUTPUT_ROOT: /data/output
+      VI_DEBUG: "true"
+    volumes:
+      - ./src:/app/src
+      - ./data/input:/data/input
+      - ./data/output:/data/output
+    command: >
+      uv run uvicorn vi_app.api.main:app --host 0.0.0.0 --port 8000 --reload
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
+      interval: 2m
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
