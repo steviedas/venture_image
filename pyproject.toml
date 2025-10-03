@@ -39,9 +39,7 @@ Source = "https://example.com/venture-image"
 [project.entry-points."vi_app.modules"]
 cleanup = "vi_app.modules.cleanup.router:router"
 convert_images = "vi_app.modules.convert_images.router:router"
-# Add others as you build them:
-# dedup = "vi_app.modules.dedup.router:router"
-# sort = "vi_app.modules.sort.router:router"
+dedup = "vi_app.modules.dedup.router:router"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/vi_app"]
