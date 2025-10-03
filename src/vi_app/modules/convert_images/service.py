@@ -5,6 +5,13 @@ from pathlib import Path
 
 from PIL import Image, ImageCms
 
+try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+    _HEIF_OK = True
+except Exception:
+    _HEIF_OK = False
+
 from vi_app.core.paths import mirrored_output_path, sanitize_filename
 
 
@@ -28,36 +35,39 @@ def _to_jpeg(
     flatten_alpha: bool,
     dry_run: bool,
 ) -> tuple[bool, str | None]:
-    """
-    Convert a single image to JPEG. Returns (converted, reason_if_not).
-    """
     if dst.exists() and not overwrite:
         return False, "exists"
     if dry_run:
+        return True, "dry_run"
+
+    try:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        with Image.open(src) as im:
+            # Convert color space to sRGB if possible
+            try:
+                if "icc_profile" in im.info and im.info["icc_profile"]:
+                    srgb = ImageCms.createProfile("sRGB")
+                    src_profile = ImageCms.ImageCmsProfile(bytes(im.info["icc_profile"]))
+                    im = ImageCms.profileToProfile(im, src_profile, srgb, outputMode="RGB")
+            except Exception:
+                im = im.convert("RGB" if im.mode != "RGB" else "RGB")
+
+            if im.mode in ("RGBA", "LA") and flatten_alpha:
+                bg = Image.new("RGB", im.size, (255, 255, 255))
+                if im.mode != "RGBA":
+                    im = im.convert("RGBA")
+                bg.paste(im, mask=im.split()[-1])
+                im = bg
+            else:
+                im = im.convert("RGB")
+
+            im.save(dst, format="JPEG", quality=quality, optimize=True, progressive=True)
         return True, None
-
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    with Image.open(src) as im:
-        # Convert color space to sRGB if needed (best-effort)
-        try:
-            if "icc_profile" in im.info and im.info["icc_profile"]:
-                srgb = ImageCms.createProfile("sRGB")
-                src_profile = ImageCms.ImageCmsProfile(bytes(im.info["icc_profile"]))
-                im = ImageCms.profileToProfile(im, src_profile, srgb, outputMode="RGB")
-        except Exception:
-            im = im.convert("RGB" if im.mode != "RGB" else "RGB")
-
-        if im.mode in ("RGBA", "LA") and flatten_alpha:
-            bg = Image.new("RGB", im.size, (255, 255, 255))
-            if im.mode != "RGBA":
-                im = im.convert("RGBA")
-            bg.paste(im, mask=im.split()[-1])
-            im = bg
-        else:
-            im = im.convert("RGB")
-
-        im.save(dst, format="JPEG", quality=quality, optimize=True, progressive=True)
-    return True, None
+    except Exception as e:
+        # If HEIC failed and plugin not loaded, give a clearer reason
+        if src.suffix.lower() in {".heic", ".heif"} and not _HEIF_OK:
+            return False, "heic_not_supported"
+        return False, f"error:{e.__class__.__name__}"
 
 
 def plan_webp_to_jpeg(

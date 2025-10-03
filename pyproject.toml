@@ -16,6 +16,7 @@ dependencies = [
   "pydantic>=2.7",
   "pydantic-settings>=2.5",
   "pillow>=10.0",
+  "pillow-heif>=0.16",
   "imagehash>=4.3",
   "tqdm>=4.66",
   "exifread>=3.0.0",
