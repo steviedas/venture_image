@@ -24,3 +24,10 @@ clean:
     docker volume prune -f
     docker network prune -f
     docker system prune -a --volumes -f
+
+reset:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    dir="data/output"
+    mkdir -p "$dir"
+    find "$dir" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
