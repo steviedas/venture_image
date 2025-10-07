@@ -47,6 +47,7 @@ class ConvertFolderRequest(BaseModel):
     Convert any supported image under src_root to JPEG,
     mirroring the directory structure under dst_root (or src_root if omitted).
     """
+
     src_root: DirectoryPath = Field(
         ...,
         description="Root folder to scan recursively for images.",

@@ -7,6 +7,7 @@ from PIL import Image, ImageCms
 
 try:
     from pillow_heif import register_heif_opener
+
     register_heif_opener()
     _HEIF_OK = True
 except Exception:
@@ -47,8 +48,12 @@ def _to_jpeg(
             try:
                 if "icc_profile" in im.info and im.info["icc_profile"]:
                     srgb = ImageCms.createProfile("sRGB")
-                    src_profile = ImageCms.ImageCmsProfile(bytes(im.info["icc_profile"]))
-                    im = ImageCms.profileToProfile(im, src_profile, srgb, outputMode="RGB")
+                    src_profile = ImageCms.ImageCmsProfile(
+                        bytes(im.info["icc_profile"])
+                    )
+                    im = ImageCms.profileToProfile(
+                        im, src_profile, srgb, outputMode="RGB"
+                    )
             except Exception:
                 im = im.convert("RGB" if im.mode != "RGB" else "RGB")
 
@@ -61,7 +66,9 @@ def _to_jpeg(
             else:
                 im = im.convert("RGB")
 
-            im.save(dst, format="JPEG", quality=quality, optimize=True, progressive=True)
+            im.save(
+                dst, format="JPEG", quality=quality, optimize=True, progressive=True
+            )
         return True, None
     except Exception as e:
         # If HEIC failed and plugin not loaded, give a clearer reason

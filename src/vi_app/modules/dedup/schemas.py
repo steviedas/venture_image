@@ -9,6 +9,7 @@ class DedupStrategy(str, Enum):
     content = "content"
     metadata = "metadata"
 
+
 class DedupItem(BaseModel):
     keep: str = Field(..., example="/data/input/album/IMG_0001.jpg")
     duplicates: list[str] = Field(
@@ -18,6 +19,8 @@ class DedupItem(BaseModel):
             "/data/input/album/IMG_0001_1.jpg",
         ],
     )
+
+
 class DedupRequest(BaseModel):
     root: DirectoryPath = Field(..., example="/data/input")
     strategy: DedupStrategy = Field(DedupStrategy.content, example="content")
@@ -36,7 +39,9 @@ class DedupRequest(BaseModel):
 class DedupResponse(BaseModel):
     dry_run: bool = Field(..., example=True)
     strategy: DedupStrategy = Field(..., example="content")
-    clusters_count: int = Field(..., ge=0, example=3, description="Number of duplicate clusters found.")
+    clusters_count: int = Field(
+        ..., ge=0, example=3, description="Number of duplicate clusters found."
+    )
     duplicates_count: int = Field(
         ...,
         ge=0,
@@ -56,8 +61,8 @@ class DedupResponse(BaseModel):
                 "keep": "/data/input/album/IMG_0001.jpg",
                 "duplicates": [
                     "/data/input/album/IMG_0001 (copy).jpg",
-                    "/data/input/album/IMG_0001_1.jpg"
-                ]
+                    "/data/input/album/IMG_0001_1.jpg",
+                ],
             }
         ],
     )
