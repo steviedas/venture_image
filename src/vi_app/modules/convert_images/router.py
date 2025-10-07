@@ -15,8 +15,19 @@ from .service import (
 router = APIRouter(prefix="/convert", tags=["convert"])
 
 
-@router.post("/webp-to-jpeg", response_model=list[ConversionResult])
-def webp_to_jpeg(req: WebpToJpegRequest):
+@router.post(
+    path="/webp-to-jpeg",
+    response_model=list[ConversionResult],
+    summary="Convert all .webp images under a folder to JPEG",
+    description=(
+        "Recursively scans `src_root` for `.webp` images and converts them to JPEG, "
+        "mirroring the directory structure under `dst_root` (or `src_root` if omitted). "
+        "Respects `overwrite` (skip when destination exists unless true), "
+        "and `flatten_alpha` (composite transparency onto white). "
+        "When `dry_run` is true, no files are written—only the planned results are returned."
+    ),
+)
+def webp_to_jpeg(req: WebpToJpegRequest) -> list[ConversionResult]:
     try:
         results = apply_webp_to_jpeg(
             Path(req.src_root),
@@ -34,8 +45,20 @@ def webp_to_jpeg(req: WebpToJpegRequest):
         raise to_http(err) from err
 
 
-@router.post("/folder-to-jpeg", response_model=list[ConversionResult])
-def folder_to_jpeg(req: ConvertFolderRequest):
+@router.post(
+    path="/folder-to-jpeg",
+    response_model=list[ConversionResult],
+    summary="Convert all supported images in a folder to JPEG",
+    description=(
+        "Scans `src_root` for supported formats (e.g., PNG, WEBP, TIFF, HEIC/HEIF*) and converts "
+        "each to JPEG, mirroring the source directory structure under `dst_root` (or `src_root` if omitted). "
+        "Honors `overwrite` (skip when destination exists unless true), `recurse` (include subfolders), and "
+        "`flatten_alpha` (composite transparency onto white). When `dry_run` is true, no files are written—"
+        "the endpoint returns the planned results only.\n\n"
+        "*HEIC/HEIF conversion requires the `pillow-heif` plugin to be available in the environment."
+    ),
+)
+def folder_to_jpeg(req: ConvertFolderRequest) -> list[ConversionResult]:
     try:
         results = apply_convert_folder(
             Path(req.src_root),
