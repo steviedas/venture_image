@@ -1,3 +1,6 @@
+default:
+    just --list
+
 install:
     uv sync --all-extras --group dev
 

@@ -45,19 +45,26 @@ def _to_jpeg(
     try:
         dst.parent.mkdir(parents=True, exist_ok=True)
         with Image.open(src) as im:
-            # Convert color space to sRGB if possible
+            # --- capture metadata BEFORE transforms ---
+            exif_bytes = im.info.get("exif")           # preserves EXIF (DateTimeOriginal, GPS, etc.)
+            icc_bytes = im.info.get("icc_profile")     # preserves ICC profile if we don't re-profile
+
+            # --- color management (convert to sRGB when possible) ---
             try:
                 if "icc_profile" in im.info and im.info["icc_profile"]:
                     srgb = ImageCms.createProfile("sRGB")
-                    src_profile = ImageCms.ImageCmsProfile(
-                        bytes(im.info["icc_profile"])
-                    )
-                    im = ImageCms.profileToProfile(
-                        im, src_profile, srgb, outputMode="RGB"
-                    )
+                    src_profile = ImageCms.ImageCmsProfile(bytes(im.info["icc_profile"]))
+                    im = ImageCms.profileToProfile(im, src_profile, srgb, outputMode="RGB")
+                    # after conversion, you can choose to embed an sRGB profile; Pillow doesn't
+                    # automatically add one, so we can drop the original ICC (now invalid) and
+                    # let viewers assume sRGB. If you want to embed sRGB, uncomment:
+                    # icc_bytes = ImageCms.ImageCmsProfile(srgb).tobytes()  # may not be available in all builds
+                    icc_bytes = None  # safest: don't embed the old, now-wrong profile
             except Exception:
-                im = im.convert("RGB" if im.mode != "RGB" else "RGB")
+                # fall back to plain RGB
+                pass
 
+            # --- alpha handling ---
             if im.mode in ("RGBA", "LA") and flatten_alpha:
                 bg = Image.new("RGB", im.size, (255, 255, 255))
                 if im.mode != "RGBA":
@@ -67,9 +74,20 @@ def _to_jpeg(
             else:
                 im = im.convert("RGB")
 
-            im.save(
-                dst, format="JPEG", quality=quality, optimize=True, progressive=True
-            )
+            # --- save with preserved metadata ---
+            save_kwargs = {
+                "format": "JPEG",
+                "quality": quality,
+                "optimize": True,
+                "progressive": True,
+            }
+            if exif_bytes:
+                save_kwargs["exif"] = exif_bytes
+            if icc_bytes:
+                save_kwargs["icc_profile"] = icc_bytes
+
+            im.save(dst, **save_kwargs)
+
         return True, None
     except Exception as e:
         # If HEIC failed and plugin not loaded, give a clearer reason

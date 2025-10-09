@@ -14,8 +14,21 @@ from .schemas import (
     RemoveFilesResponse,
     RemoveFoldersRequest,
     RemoveFoldersResponse,
+    # existing models...
+    RenameBySequenceRequest,
+    RenameBySequenceResponse,
+    SortRequest,
+    SortResponse,
 )
-from .service import find_marked_dupes, remove_files, remove_folders
+from .service import (
+    find_marked_dupes,
+    remove_files,
+    remove_folders,
+    # existing service funcs...
+    rename_by_sequence,
+    sort_apply,
+    sort_plan,
+)
 
 router = APIRouter(prefix="/cleanup", tags=["cleanup"])
 
@@ -86,5 +99,49 @@ def find_marked_dupes_endpoint(req: FindMarkedDupesRequest) -> FindMarkedDupesRe
     try:
         items = find_marked_dupes(Path(req.root), req.suffix_pattern)
         return FindMarkedDupesResponse(count=len(items), paths=[str(p) for p in items])
+    except Exception as err:
+        raise to_http(err) from err
+
+
+@router.post(
+    path="/sort",
+    response_model=SortResponse,
+    summary="Sort images (by date or location) as part of cleanup",
+    description=(
+        "Plan or apply sorting of images under `src_root` using the selected `strategy`.\n\n"
+        "- `by_date` → `YYYY/MM/filename`\n"
+        "- `by_location` → `City_Country/filename` (falls back to Country or `Unknown`)\n\n"
+        "`dry_run=true` returns planned moves only; `dry_run=false` applies them."
+    ),
+)
+def cleanup_sort_endpoint(req: SortRequest) -> SortResponse:
+    try:
+        moves = sort_plan(req) if req.dry_run else sort_apply(req)
+        return SortResponse(
+            dry_run=req.dry_run,
+            strategy=req.strategy,
+            moves_count=len(moves),
+            moves=moves,
+        )
+    except Exception as err:
+        raise to_http(err) from err
+
+
+@router.post(
+    path="/rename",
+    response_model=RenameBySequenceResponse,
+    summary="Rename images in each directory to IMG_XXXXXX ordered by date taken",
+    description=(
+        "For each directory (and sub-directory when `recurse=true`), sort images by "
+        "**date taken** (EXIF DateTimeOriginal/Digitized/DateTime). If missing, fall back to the earliest "
+        "available filesystem timestamp. Then rename within that directory to `IMG_000001`, `IMG_000002`, ... "
+        "preserving the original file extension and resetting the sequence **per directory**.\n\n"
+        "When `dry_run=true` (default), returns the planned renames only. "
+        "When `dry_run=false`, performs the renames safely (two-phase to avoid collisions)."
+    ),
+)
+def rename_sequence_endpoint(req: RenameBySequenceRequest) -> RenameBySequenceResponse:
+    try:
+        return rename_by_sequence(req)
     except Exception as err:
         raise to_http(err) from err
