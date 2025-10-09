@@ -1,3 +1,4 @@
+# src/vi_app/version.py
 from importlib.metadata import PackageNotFoundError, version
 
 

@@ -1,3 +1,4 @@
+# src/vi_app/core/errors.py
 from __future__ import annotations
 
 from fastapi import HTTPException, status

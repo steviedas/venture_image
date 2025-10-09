@@ -1,3 +1,4 @@
+# src/vi_app/modules/sort/strategies/by_location.py
 from __future__ import annotations
 
 from collections.abc import Iterable

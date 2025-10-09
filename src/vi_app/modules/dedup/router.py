@@ -1,3 +1,4 @@
+# src/vi_app/modules/dedup/router.py
 from fastapi import APIRouter
 
 from vi_app.core.errors import to_http

@@ -1,3 +1,4 @@
+# src/vi_app/api/main.py
 from fastapi import FastAPI
 
 from vi_app.core.registry import load_module_routers

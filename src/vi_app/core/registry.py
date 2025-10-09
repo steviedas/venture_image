@@ -1,3 +1,4 @@
+# src/vi_app/core/registry.py
 from importlib.metadata import entry_points
 
 from fastapi import APIRouter

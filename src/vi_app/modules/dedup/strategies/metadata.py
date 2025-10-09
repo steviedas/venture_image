@@ -1,3 +1,4 @@
+# src/vi_app/modules/dedup/strategies/metadata.py
 from __future__ import annotations
 
 import hashlib
