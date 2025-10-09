@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Modular image/file management backend (FastAPI) with pluggable modules via entry points."
 readme = "README.md"
 requires-python = ">=3.10"
-authors = [{ name = "Saj Rags" }]
+authors = [{ name = "Steve Das" }]
 
 dependencies = [
   "fastapi>=0.115",
