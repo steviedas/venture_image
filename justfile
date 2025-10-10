@@ -34,3 +34,67 @@ reset:
     dir="data/output"
     mkdir -p "$dir"
     find "$dir" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+
+cli:
+    uv run vi --help
+
+# -------------
+# DEDUP
+# -------------
+# STRATEGY: content | metadata
+cli-dedup-run path="" strategy="content" move_to="" option="plan":
+    uv run vi dedup run "{{path}}" --strategy "{{strategy}}" $([ -n "{{move_to}}" ] && echo --move-to "\"{{move_to}}\"" || true) --{{option}}
+
+# -------------
+# CLEANUP
+# -------------
+# patterns: pass many like: patterns='-p "\.DS_Store$" -p "(?i)Thumbs\.db$"'
+cli-cleanup-remove-files path="" patterns="" prune="true" option="plan":
+    PRUNE_FLAG=$([ "{{prune}}" = "true" ] && echo --prune-empty || echo --no-prune-empty); \
+    uv run vi cleanup remove-files "{{path}}" {{patterns}} ${PRUNE_FLAG} --{{option}}
+
+# names: pass many like: names='-n duplicate -n tmp'
+cli-cleanup-remove-folders path="" names="-n duplicate" option="plan":
+    uv run vi cleanup remove-folders "{{path}}" {{names}} --{{option}}
+
+# suffix is regex on the filename *stem*
+cli-cleanup-find-marked-dupes path="" suffix="_dupe(\\d+)$":
+    uv run vi cleanup find-marked-dupes "{{path}}" --suffix "{{suffix}}" --plan
+
+# rename inside each (sub)directory to IMG_XXXXXX ordered by date taken
+cli-cleanup-rename path="" recurse="true" zero_pad="6" option="plan":
+    RFLAG=$([ "{{recurse}}" = "true" ] && echo --recurse || echo --no-recurse); \
+    uv run vi cleanup rename "{{path}}" ${RFLAG} --zero-pad {{zero_pad}} --{{option}}
+
+# sort images by_date/by_location, mirroring into dst
+cli-cleanup-sort src="" dst="" strategy="by_date" option="plan":
+    uv run vi cleanup sort "{{src}}" --dst-root "{{dst}}" --strategy "{{strategy}}" --{{option}}
+
+# -------------
+# CONVERT
+# -------------
+# convert any supported images to jpeg, mirror into dst
+# cli-convert-folder-to-jpeg src="" dst="" quality="100" overwrite="false" recurse="true" flatten="true" option="plan":
+#     O=$([ "{{overwrite}}" = "true" ] && echo --overwrite || echo --no-overwrite); \
+#     R=$([ "{{recurse}}" = "true" ] && echo --recurse || echo --no-recurse); \
+#     F=$([ "{{flatten}}" = "true" ] && echo --flatten-alpha || echo --no-flatten-alpha); \
+#     uv run vi convert folder-to-jpeg "{{src}}" -d "{{dst}}" -q {{quality}} ${O} ${R} ${F} --{{option}}
+
+cli-convert-folder-to-jpeg src="" dst="" quality="100" overwrite="false" recurse="true" flatten="true" option="plan":
+    O=$([ "{{overwrite}}" = "true" ] && echo --overwrite || echo --no-overwrite); \
+    R=$([ "{{recurse}}" = "true" ] && echo --recurse   || echo --no-recurse); \
+    F=$([ "{{flatten}}" = "true" ] && echo --flatten-alpha || echo --no-flatten-alpha); \
+    uv run vi convert folder-to-jpeg "{{src}}" -d "{{dst}}" -q {{quality}} ${O} ${R} ${F} --{{option}}
+
+# convert only .webp to jpeg, mirror into dst
+cli-convert-webp-to-jpeg src="" dst="" quality="92" overwrite="false" flatten="true" option="plan":
+    O=$([ "{{overwrite}}" = "true" ] && echo --overwrite || echo --no-overwrite); \
+    F=$([ "{{flatten}}" = "true" ] && echo --flatten-alpha || echo --no-flatten-alpha); \
+    uv run vi convert webp-to-jpeg "{{src}}" -d "{{dst}}" -q {{quality}} ${O} ${F} --{{option}}
+
+
+# uv run vi convert folder-to-jpeg \
+#     "C:\Users\stevi\Downloads\iCloud Photos Part 1 of 2\iCloud Shared Albums\iCloud Shared Albums\My Albums\Angie and Saj's 25th" \
+#     -d "C:\Users\stevi\Downloads\iCloud Photos Part 1 of 2\iCloud Shared Albums\iCloud Shared Albums\My Albums\Converted" \
+#     --apply
+
