@@ -20,11 +20,11 @@ class WebpToJpegRequest(BaseModel):
         example="/data/output",
     )
     quality: int = Field(
-        92,
+        100,
         ge=1,
         le=100,
         description="JPEG quality (1–100).",
-        example=92,
+        example=100,
     )
     overwrite: bool = Field(
         False,
@@ -62,11 +62,11 @@ class ConvertFolderRequest(BaseModel):
         example="/data/output",
     )
     quality: int = Field(
-        92,
+        100,
         ge=1,
         le=100,
         description="JPEG quality (1–100).",
-        example=92,
+        example=100,
     )
     overwrite: bool = Field(
         False,

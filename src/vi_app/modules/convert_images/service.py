@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from pathlib import Path
+from typing import Iterator
 
 from PIL import Image, ImageCms
 
@@ -16,6 +17,66 @@ except Exception:
 
 from vi_app.core.paths import mirrored_output_path, sanitize_filename
 
+_SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp", ".heic", ".heif", ".gif"}
+DEFAULT_CONVERT_SUBDIR = "converted"
+
+def _resolve_base_dst(src_root: Path, dst_root: Path | None) -> Path:
+    """
+    Return the destination base directory. If dst_root is None,
+    use <src_root>/converted.
+    """
+    return (Path(dst_root).expanduser().resolve()
+            if dst_root is not None
+            else (Path(src_root).expanduser().resolve() / DEFAULT_CONVERT_SUBDIR))
+
+
+def enumerate_convert_targets(src_root: Path, dst_root: Path | None, recurse: bool) -> list[tuple[Path, Path]]:
+    src_root = Path(src_root).expanduser().resolve()
+    base_dst = _resolve_base_dst(src_root, dst_root)
+
+    files: list[Path] = []
+    if recurse:
+        files = [p for p in src_root.rglob("*") if p.is_file() and p.suffix.lower() in _SUPPORTED_EXTS]
+    else:
+        files = [p for p in src_root.iterdir() if p.is_file() and p.suffix.lower() in _SUPPORTED_EXTS]
+
+    pairs: list[tuple[Path, Path]] = []
+    for src in files:
+        rel = src.relative_to(src_root)
+        dst = (base_dst / rel).with_suffix(".jpeg")  # you already switched to .jpeg
+        pairs.append((src, dst))
+    return pairs
+
+
+def iter_convert_folder(
+    src_root: Path,
+    dst_root: Path | None,
+    recurse: bool,
+    quality: int,
+    overwrite: bool,
+    flatten_alpha: bool,
+    dry_run: bool,
+) -> Iterator[tuple[Path, Path, bool, str | None]]:
+    """
+    Yield one result per file (src, dst, converted, reason). Uses the same rules as apply_convert_folder.
+    """
+    from .service import _to_jpeg  # reuse your existing single-file converter
+
+    for src, dst in enumerate_convert_targets(src_root, dst_root, recurse):
+        if dry_run:
+            # mirror apply_convert_folder's dry-run semantics
+            yield (src, dst, True, "dry_run")
+            continue
+
+        ok, reason = _to_jpeg(
+            src=src,
+            dst=dst,
+            quality=quality,
+            overwrite=overwrite,
+            flatten_alpha=flatten_alpha,
+            dry_run=False,
+        )
+        yield (src, dst, ok, reason)
 
 def _iter_images(root: Path, recurse: bool = True) -> Iterable[Path]:
     exts = {".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp", ".heic", ".heif"}
@@ -46,25 +107,21 @@ def _to_jpeg(
         dst.parent.mkdir(parents=True, exist_ok=True)
         with Image.open(src) as im:
             # --- capture metadata BEFORE transforms ---
-            exif_bytes = im.info.get("exif")           # preserves EXIF (DateTimeOriginal, GPS, etc.)
-            icc_bytes = im.info.get("icc_profile")     # preserves ICC profile if we don't re-profile
+            exif_bytes = im.info.get("exif")           # raw EXIF
+            xmp_bytes = im.info.get("xmp")             # raw XMP (requires Pillow >= 11)
+            icc_bytes = im.info.get("icc_profile")     # ICC profile
 
-            # --- color management (convert to sRGB when possible) ---
+            # --- color management / alpha handling (your existing code) ---
             try:
                 if "icc_profile" in im.info and im.info["icc_profile"]:
                     srgb = ImageCms.createProfile("sRGB")
                     src_profile = ImageCms.ImageCmsProfile(bytes(im.info["icc_profile"]))
                     im = ImageCms.profileToProfile(im, src_profile, srgb, outputMode="RGB")
-                    # after conversion, you can choose to embed an sRGB profile; Pillow doesn't
-                    # automatically add one, so we can drop the original ICC (now invalid) and
-                    # let viewers assume sRGB. If you want to embed sRGB, uncomment:
-                    # icc_bytes = ImageCms.ImageCmsProfile(srgb).tobytes()  # may not be available in all builds
-                    icc_bytes = None  # safest: don't embed the old, now-wrong profile
+                    # after converting to sRGB, don't embed the old profile
+                    icc_bytes = None
             except Exception:
-                # fall back to plain RGB
                 pass
 
-            # --- alpha handling ---
             if im.mode in ("RGBA", "LA") and flatten_alpha:
                 bg = Image.new("RGB", im.size, (255, 255, 255))
                 if im.mode != "RGBA":
@@ -74,8 +131,8 @@ def _to_jpeg(
             else:
                 im = im.convert("RGB")
 
-            # --- save with preserved metadata ---
-            save_kwargs = {
+            # --- save with EXIF + XMP + (optional) ICC ---
+            save_kwargs: dict[str, object] = {
                 "format": "JPEG",
                 "quality": quality,
                 "optimize": True,
@@ -83,6 +140,8 @@ def _to_jpeg(
             }
             if exif_bytes:
                 save_kwargs["exif"] = exif_bytes
+            if xmp_bytes:
+                save_kwargs["xmp"] = xmp_bytes   # <— this preserves ratings/labels in XMP
             if icc_bytes:
                 save_kwargs["icc_profile"] = icc_bytes
 
@@ -90,7 +149,6 @@ def _to_jpeg(
 
         return True, None
     except Exception as e:
-        # If HEIC failed and plugin not loaded, give a clearer reason
         if src.suffix.lower() in {".heic", ".heif"} and not _HEIF_OK:
             return False, "heic_not_supported"
         return False, f"error:{e.__class__.__name__}"
@@ -117,20 +175,26 @@ def plan_webp_to_jpeg(
 
 def apply_webp_to_jpeg(
     src_root: Path,
-    dst_root: Path | None,
-    quality: int,
-    overwrite: bool,
-    flatten_alpha: bool,
-    dry_run: bool,
-):
-    moves = plan_webp_to_jpeg(src_root, dst_root, quality, overwrite, flatten_alpha)
-    results = []
-    for src, dst in moves:
-        converted, reason = _to_jpeg(
-            src, dst, quality, overwrite, flatten_alpha, dry_run
-        )
-        results.append((src, dst, converted, reason))
+    dst_root: Path | None = None,
+    quality: int = 100,
+    overwrite: bool = False,
+    flatten_alpha: bool = True,
+    dry_run: bool = True,
+) -> list[tuple[Path, Path, bool, str | None]]:
+    src_root = Path(src_root).expanduser().resolve()
+    base_dst = _resolve_base_dst(src_root, dst_root)
+
+    results: list[tuple[Path, Path, bool, str | None]] = []
+    for src in sorted(src_root.rglob("*.webp")):
+        rel = src.relative_to(src_root)
+        dst = (base_dst / rel).with_suffix(".jpeg")
+        if dry_run:
+            results.append((src, dst, True, "dry_run"))
+            continue
+        ok, reason = _to_jpeg(src=src, dst=dst, quality=quality, overwrite=overwrite, flatten_alpha=flatten_alpha, dry_run=False)
+        results.append((src, dst, ok, reason))
     return results
+
 
 
 def plan_convert_folder(

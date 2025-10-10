@@ -1,34 +1,45 @@
 from __future__ import annotations
 
 from pathlib import Path
+import time
+from typing import Optional
+
 import typer
+from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn, TimeRemainingColumn
 
-# --- dedup ---
-from vi_app.modules.dedup.schemas import DedupRequest, DedupStrategy
-from vi_app.modules.dedup.service import plan as dedup_plan, apply as dedup_apply
-
-# --- cleanup ---
 from vi_app.modules.cleanup.schemas import (
+    FindMarkedDupesRequest,
     RemoveFilesRequest,
     RemoveFoldersRequest,
-    FindMarkedDupesRequest,
     RenameBySequenceRequest,
     SortRequest,
     SortStrategy,
 )
 from vi_app.modules.cleanup.service import (
-    remove_files as svc_remove_files,
-    remove_folders as svc_remove_folders,
     find_marked_dupes as svc_find_marked_dupes,
-    rename_by_sequence as svc_rename_by_sequence,
-    sort_plan,
-    sort_apply,
 )
-
-# --- convert ---
-from vi_app.modules.convert_images.schemas import ConvertFolderRequest, WebpToJpegRequest
-from vi_app.modules.convert_images.service import apply_convert_folder, apply_webp_to_jpeg
-
+from vi_app.modules.cleanup.service import (
+    remove_files as svc_remove_files,
+)
+from vi_app.modules.cleanup.service import (
+    remove_folders as svc_remove_folders,
+)
+from vi_app.modules.cleanup.service import (
+    rename_by_sequence as svc_rename_by_sequence,
+)
+from vi_app.modules.cleanup.service import (
+    sort_apply,
+    sort_plan,
+)
+from vi_app.modules.convert_images.schemas import WebpToJpegRequest
+from vi_app.modules.convert_images.service import (
+    apply_webp_to_jpeg,
+    enumerate_convert_targets,
+    iter_convert_folder,
+)
+from vi_app.modules.dedup.schemas import DedupRequest, DedupStrategy
+from vi_app.modules.dedup.service import apply as dedup_apply
+from vi_app.modules.dedup.service import plan as dedup_plan
 
 app = typer.Typer(help="Venture Image CLI")
 
@@ -173,46 +184,113 @@ def cleanup_sort_cmd(
 # =========================
 @convert_app.command("folder-to-jpeg", help="Convert supported images under a folder to JPEG.")
 def convert_folder_to_jpeg_cmd(
-    src_root: Path = typer.Argument(..., exists=True, file_okay=False, dir_okay=True),
+    # Interactive prompts kick in when these are omitted:
+    src_root: Path | None = typer.Argument(None, exists=False, file_okay=False, dir_okay=True),
     dst_root: Path | None = typer.Option(None, "--dst-root", "-d", help="Destination root (mirror if omitted)."),
-    quality: int = typer.Option(92, "--quality", "-q", min=1, max=100, help="JPEG quality."),
-    overwrite: bool = typer.Option(False, "--overwrite/--no-overwrite", help="Overwrite destination if exists."),
-    recurse: bool = typer.Option(True, "--recurse/--no-recurse", help="Scan subfolders."),
-    flatten_alpha: bool = typer.Option(True, "--flatten-alpha/--no-flatten-alpha", help="Composite transparency to white."),
+    quality: int | None = typer.Option(None, "--quality", "-q", min=1, max=100, help="JPEG quality."),
+    overwrite: bool | None = typer.Option(None, "--overwrite/--no-overwrite", help="Overwrite destination if exists."),
+    recurse: bool | None = typer.Option(None, "--recurse/--no-recurse", help="Scan subfolders."),
+    flatten_alpha: bool | None = typer.Option(None, "--flatten-alpha/--no-flatten-alpha", help="Composite transparency to white."),
     apply: bool = typer.Option(False, "--apply", help="Perform writes."),
     plan: bool = typer.Option(False, "--plan", help="Alias for dry-run (default)."),
 ):
-    dry_run = _resolve_dry_run(apply, plan)
-    req = ConvertFolderRequest(
-        src_root=src_root,
-        dst_root=dst_root,
-        quality=quality,
-        overwrite=overwrite,
-        recurse=recurse,
-        flatten_alpha=flatten_alpha,
-        dry_run=dry_run,
-    )
-    results = apply_convert_folder(
-        src_root=req.src_root,
-        dst_root=req.dst_root,
-        recurse=req.recurse,
-        quality=req.quality,
-        overwrite=req.overwrite,
-        flatten_alpha=req.flatten_alpha,
-        dry_run=req.dry_run,
-    )
-    verb = "Would convert" if req.dry_run else "Converted"
-    typer.echo(f"{verb} {len(results)} file(s)")
-    for src, dst, ok, reason in results:
-        status = "OK" if ok else f"SKIP({reason})"
-        typer.echo(f"{src} -> {dst} [{status}]")
+    # -------- prompts for any missing inputs --------
+    def _confirm(msg: str, default: bool) -> bool:
+        return typer.confirm(msg, default=default)
 
+    if src_root is None:
+        src_root = Path(typer.prompt("src (folder to scan)")).expanduser()
+    if not src_root.exists() or not src_root.is_dir():
+        raise typer.BadParameter(f"src_root does not exist or is not a directory: {src_root}")
+
+    # You can leave dst_root None — the service defaults to <src>/converted
+    if dst_root is None:
+        dst_str = typer.prompt(
+            "dst (destination root; press Enter to use default '<src>/converted')",
+            default="",
+        )
+        dst_root = Path(dst_str).expanduser() if dst_str else None
+
+    if quality is None:
+        quality = typer.prompt("quality (1-100)", default=100, type=int)
+        if not (1 <= quality <= 100):
+            raise typer.BadParameter("quality must be between 1 and 100")
+
+    if overwrite is None:
+        overwrite = _confirm("overwrite destination files if they already exist?", default=False)
+
+    if recurse is None:
+        recurse = _confirm("recurse into subfolders?", default=True)
+
+    if flatten_alpha is None:
+        flatten_alpha = _confirm("flatten alpha (composite transparency to white)?", default=True)
+
+    if not apply and not plan:
+        mode = typer.prompt("option (plan/apply)", default="plan").strip().lower()
+        if mode not in {"plan", "apply"}:
+            raise typer.BadParameter("option must be 'plan' or 'apply'")
+        plan = mode == "plan"
+        apply = mode == "apply"
+
+    dry_run = _resolve_dry_run(apply, plan)
+
+    # -------- time the whole operation --------
+    t0 = time.perf_counter()
+
+    # enumerate targets once so we have an exact total and full plan
+    targets = enumerate_convert_targets(src_root, dst_root, recurse)
+    total = len(targets)
+    if total == 0:
+        typer.echo("No convertible images found.")
+        return
+
+    if dry_run:
+        # -------- PLAN MODE: print the whole plan, no rich/progress --------
+        for src, dst in targets:
+            typer.echo(f"{src} -> {dst}")
+        elapsed = time.perf_counter() - t0
+        rate = total / elapsed if elapsed > 0 else 0.0
+        typer.echo(f"Would convert {total} file(s) in {elapsed:.2f}s (~{rate:.1f} files/s).")
+        return
+
+    # -------- APPLY MODE: show progress bar while converting --------
+    bar = Progress(
+        TextColumn("[bold]Converting[/]"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TextColumn("•"),
+        TimeRemainingColumn(),
+        TextColumn("• {task.description}"),
+    )
+
+    converted = 0
+    skipped = 0
+    with bar:
+        task = bar.add_task("starting…", total=total)
+        for src, dst, ok, _reason in iter_convert_folder(
+            src_root=src_root,
+            dst_root=dst_root,
+            recurse=recurse,
+            quality=quality,
+            overwrite=overwrite,
+            flatten_alpha=flatten_alpha,
+            dry_run=False,
+        ):
+            bar.update(task, advance=1, description=f"{src.name} -> {dst.name}")
+            if ok:
+                converted += 1
+            else:
+                skipped += 1
+
+    elapsed = time.perf_counter() - t0
+    rate = total / elapsed if elapsed > 0 else 0.0
+    typer.echo(f"Converted {converted} file(s), skipped {skipped} out of {total} in {elapsed:.2f}s (~{rate:.1f} files/s).")
 
 @convert_app.command("webp-to-jpeg", help="Convert all .webp images under a folder to JPEG.")
 def convert_webp_to_jpeg_cmd(
     src_root: Path = typer.Argument(..., exists=True, file_okay=False, dir_okay=True),
     dst_root: Path | None = typer.Option(None, "--dst-root", "-d"),
-    quality: int = typer.Option(92, "--quality", "-q", min=1, max=100),
+    quality: int = typer.Option(100, "--quality", "-q", min=1, max=100),
     overwrite: bool = typer.Option(False, "--overwrite/--no-overwrite"),
     flatten_alpha: bool = typer.Option(True, "--flatten-alpha/--no-flatten-alpha"),
     apply: bool = typer.Option(False, "--apply"),

@@ -1,6 +1,9 @@
 default:
     just --list
 
+ps:
+    docker compose ps
+
 install:
     uv sync --all-extras --group dev
 
@@ -73,28 +76,11 @@ cli-cleanup-sort src="" dst="" strategy="by_date" option="plan":
 # -------------
 # CONVERT
 # -------------
-# convert any supported images to jpeg, mirror into dst
-# cli-convert-folder-to-jpeg src="" dst="" quality="100" overwrite="false" recurse="true" flatten="true" option="plan":
-#     O=$([ "{{overwrite}}" = "true" ] && echo --overwrite || echo --no-overwrite); \
-#     R=$([ "{{recurse}}" = "true" ] && echo --recurse || echo --no-recurse); \
-#     F=$([ "{{flatten}}" = "true" ] && echo --flatten-alpha || echo --no-flatten-alpha); \
-#     uv run vi convert folder-to-jpeg "{{src}}" -d "{{dst}}" -q {{quality}} ${O} ${R} ${F} --{{option}}
-
-cli-convert-folder-to-jpeg src="" dst="" quality="100" overwrite="false" recurse="true" flatten="true" option="plan":
-    O=$([ "{{overwrite}}" = "true" ] && echo --overwrite || echo --no-overwrite); \
-    R=$([ "{{recurse}}" = "true" ] && echo --recurse   || echo --no-recurse); \
-    F=$([ "{{flatten}}" = "true" ] && echo --flatten-alpha || echo --no-flatten-alpha); \
-    uv run vi convert folder-to-jpeg "{{src}}" -d "{{dst}}" -q {{quality}} ${O} ${R} ${F} --{{option}}
+cli-convert-folder-to-jpeg:
+    uv run vi convert folder-to-jpeg
 
 # convert only .webp to jpeg, mirror into dst
-cli-convert-webp-to-jpeg src="" dst="" quality="92" overwrite="false" flatten="true" option="plan":
+cli-convert-webp-to-jpeg src="" dst="" quality="100" overwrite="false" flatten="true" option="plan":
     O=$([ "{{overwrite}}" = "true" ] && echo --overwrite || echo --no-overwrite); \
     F=$([ "{{flatten}}" = "true" ] && echo --flatten-alpha || echo --no-flatten-alpha); \
     uv run vi convert webp-to-jpeg "{{src}}" -d "{{dst}}" -q {{quality}} ${O} ${F} --{{option}}
-
-
-# uv run vi convert folder-to-jpeg \
-#     "C:\Users\stevi\Downloads\iCloud Photos Part 1 of 2\iCloud Shared Albums\iCloud Shared Albums\My Albums\Angie and Saj's 25th" \
-#     -d "C:\Users\stevi\Downloads\iCloud Photos Part 1 of 2\iCloud Shared Albums\iCloud Shared Albums\My Albums\Converted" \
-#     --apply
-
