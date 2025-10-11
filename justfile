@@ -65,9 +65,8 @@ cli-cleanup-find-marked-dupes path="" suffix="_dupe(\\d+)$":
     uv run vi cleanup find-marked-dupes "{{path}}" --suffix "{{suffix}}" --plan
 
 # rename inside each (sub)directory to IMG_XXXXXX ordered by date taken
-cli-cleanup-rename path="" recurse="true" zero_pad="6" option="plan":
-    RFLAG=$([ "{{recurse}}" = "true" ] && echo --recurse || echo --no-recurse); \
-    uv run vi cleanup rename "{{path}}" ${RFLAG} --zero-pad {{zero_pad}} --{{option}}
+cli-cleanup-rename:
+    uv run vi cleanup rename
 
 # sort images by_date/by_location, mirroring into dst
 cli-cleanup-sort src="" dst="" strategy="by_date" option="plan":

@@ -1,11 +1,18 @@
 from __future__ import annotations
 
-from pathlib import Path
 import time
-from typing import Optional
+from pathlib import Path
 
 import typer
-from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn, TimeRemainingColumn
+from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    Progress,
+    TaskProgressColumn,
+    TextColumn,
+    TimeRemainingColumn,
+)
+from rich.table import Table
 
 from vi_app.modules.cleanup.schemas import (
     FindMarkedDupesRequest,
@@ -16,6 +23,12 @@ from vi_app.modules.cleanup.schemas import (
     SortStrategy,
 )
 from vi_app.modules.cleanup.service import (
+    enumerate_rename_targets,
+    iter_rename_by_sequence,
+    sort_apply,
+    sort_plan,
+)
+from vi_app.modules.cleanup.service import (
     find_marked_dupes as svc_find_marked_dupes,
 )
 from vi_app.modules.cleanup.service import (
@@ -23,13 +36,6 @@ from vi_app.modules.cleanup.service import (
 )
 from vi_app.modules.cleanup.service import (
     remove_folders as svc_remove_folders,
-)
-from vi_app.modules.cleanup.service import (
-    rename_by_sequence as svc_rename_by_sequence,
-)
-from vi_app.modules.cleanup.service import (
-    sort_apply,
-    sort_plan,
 )
 from vi_app.modules.convert_images.schemas import WebpToJpegRequest
 from vi_app.modules.convert_images.service import (
@@ -69,11 +75,20 @@ def _resolve_dry_run(apply: bool, plan: bool) -> bool:
 # =========================
 # group: DEDUP (mirrors /dedup)
 # =========================
-@dedup_app.command("run", help="Detect duplicates (dry-run by default) or move them with --apply / plan with --plan.")
+@dedup_app.command(
+    "run",
+    help="Detect duplicates (dry-run by default) or move them with --apply / plan with --plan.",
+)
 def dedup_run(
-    root: Path = typer.Argument(..., exists=True, file_okay=False, dir_okay=True, help="Root folder to scan."),
-    strategy: DedupStrategy = typer.Option(DedupStrategy.content, "--strategy", "-s", help="content|metadata"),
-    move_to: Path | None = typer.Option(None, "--move-to", "-m", help="Where to move duplicates when applying."),
+    root: Path = typer.Argument(
+        ..., exists=True, file_okay=False, dir_okay=True, help="Root folder to scan."
+    ),
+    strategy: DedupStrategy = typer.Option(
+        DedupStrategy.content, "--strategy", "-s", help="content|metadata"
+    ),
+    move_to: Path | None = typer.Option(
+        None, "--move-to", "-m", help="Where to move duplicates when applying."
+    ),
     apply: bool = typer.Option(False, "--apply", help="Perform moves."),
     plan: bool = typer.Option(False, "--plan", help="Alias for dry-run (default)."),
 ):
@@ -88,7 +103,9 @@ def dedup_run(
 
     total_dups = sum(len(c.duplicates) for c in clusters)
     action = "PLAN" if req.dry_run else "APPLY"
-    typer.echo(f"[{action}] strategy={strategy} clusters={len(clusters)} duplicates={total_dups}")
+    typer.echo(
+        f"[{action}] strategy={strategy} clusters={len(clusters)} duplicates={total_dups}"
+    )
     for c in clusters:
         typer.echo(f" keep: {c.keep}")
         for d in c.duplicates:
@@ -98,27 +115,43 @@ def dedup_run(
 # =========================
 # group: CLEANUP (mirrors /cleanup)
 # =========================
-@cleanup_app.command("remove-files", help="Find and (optionally) delete files matching regex patterns.")
+@cleanup_app.command(
+    "remove-files", help="Find and (optionally) delete files matching regex patterns."
+)
 def cleanup_remove_files_cmd(
     root: Path = typer.Argument(..., exists=True, file_okay=False, dir_okay=True),
-    pattern: list[str] = typer.Option(..., "--pattern", "-p", help="Regex pattern(s). Repeat the flag."),
-    prune_empty: bool = typer.Option(True, "--prune-empty/--no-prune-empty", help="Remove now-empty dirs after delete."),
+    pattern: list[str] = typer.Option(
+        ..., "--pattern", "-p", help="Regex pattern(s). Repeat the flag."
+    ),
+    prune_empty: bool = typer.Option(
+        True,
+        "--prune-empty/--no-prune-empty",
+        help="Remove now-empty dirs after delete.",
+    ),
     apply: bool = typer.Option(False, "--apply", help="Delete files."),
     plan: bool = typer.Option(False, "--plan", help="Alias for dry-run (default)."),
 ):
     dry_run = _resolve_dry_run(apply, plan)
-    req = RemoveFilesRequest(root=root, patterns=pattern, dry_run=dry_run, remove_empty_dirs=prune_empty)
-    deleted = svc_remove_files(Path(req.root), req.patterns, req.dry_run, req.remove_empty_dirs)
+    req = RemoveFilesRequest(
+        root=root, patterns=pattern, dry_run=dry_run, remove_empty_dirs=prune_empty
+    )
+    deleted = svc_remove_files(
+        Path(req.root), req.patterns, req.dry_run, req.remove_empty_dirs
+    )
     verb = "Would remove" if req.dry_run else "Removed"
     typer.echo(f"{verb} {len(deleted)} file(s)")
     for p in deleted:
         typer.echo(str(p))
 
 
-@cleanup_app.command("remove-folders", help="Find and (optionally) remove directories by exact name.")
+@cleanup_app.command(
+    "remove-folders", help="Find and (optionally) remove directories by exact name."
+)
 def cleanup_remove_folders_cmd(
     root: Path = typer.Argument(..., exists=True, file_okay=False, dir_okay=True),
-    name: list[str] = typer.Option(["duplicate"], "--name", "-n", help="Folder name(s). Repeat the flag."),
+    name: list[str] = typer.Option(
+        ["duplicate"], "--name", "-n", help="Folder name(s). Repeat the flag."
+    ),
     apply: bool = typer.Option(False, "--apply", help="Remove directories."),
     plan: bool = typer.Option(False, "--plan", help="Alias for dry-run (default)."),
 ):
@@ -131,11 +164,18 @@ def cleanup_remove_folders_cmd(
         typer.echo(str(p))
 
 
-@cleanup_app.command("find-marked-dupes", help="List files whose filename stem matches a suffix regex (e.g., _dupe(\\d+)$).")
+@cleanup_app.command(
+    "find-marked-dupes",
+    help="List files whose filename stem matches a suffix regex (e.g., _dupe(\\d+)$).",
+)
 def cleanup_find_marked_dupes_cmd(
     root: Path = typer.Argument(..., exists=True, file_okay=False, dir_okay=True),
-    suffix_pattern: str = typer.Option(r"_dupe\(\d+\)$", "--suffix", "-s", help="Regex applied to filename stem."),
-    plan: bool = typer.Option(False, "--plan", help="Alias for dry-run (read-only command)."),
+    suffix_pattern: str = typer.Option(
+        r"_dupe\(\d+\)$", "--suffix", "-s", help="Regex applied to filename stem."
+    ),
+    plan: bool = typer.Option(
+        False, "--plan", help="Alias for dry-run (read-only command)."
+    ),
 ):
     # This command is read-only; support --plan for consistency, but ignore its value.
     req = FindMarkedDupesRequest(root=root, suffix_pattern=suffix_pattern)
@@ -145,33 +185,146 @@ def cleanup_find_marked_dupes_cmd(
         typer.echo(str(p))
 
 
-@cleanup_app.command("rename", help="Per directory, rename images to IMG_XXXXXX ordered by date taken.")
+@cleanup_app.command(
+    "rename", help="Per directory, rename images to IMG_XXXXXX ordered by date taken."
+)
 def cleanup_rename_cmd(
-    root: Path = typer.Argument(..., exists=True, file_okay=False, dir_okay=True),
-    recurse: bool = typer.Option(True, "--recurse/--no-recurse", help="Process subdirectories."),
-    zero_pad: int = typer.Option(6, "--zero-pad", "-z", min=3, max=10, help="Digits in sequence."),
+    # Make args optional so we can prompt when missing
+    root: Path | None = typer.Argument(
+        None, exists=False, file_okay=False, dir_okay=True
+    ),
+    recurse: bool | None = typer.Option(
+        None, "--recurse/--no-recurse", help="Process subdirectories."
+    ),
+    zero_pad: int | None = typer.Option(
+        None, "--zero-pad", "-z", min=3, max=10, help="Digits in sequence."
+    ),
     apply: bool = typer.Option(False, "--apply", help="Perform renames."),
     plan: bool = typer.Option(False, "--plan", help="Alias for dry-run (default)."),
 ):
+    # ---------- Interactive prompts ----------
+    if root is None:
+        root = Path(typer.prompt("root (folder to process)")).expanduser()
+    if not root.exists() or not root.is_dir():
+        raise typer.BadParameter(f"root does not exist or is not a directory: {root}")
+
+    if recurse is None:
+        recurse = typer.confirm("Process subdirectories?", default=True)
+
+    if zero_pad is None:
+        zero_pad = typer.prompt("Digits in sequence (3-10)", default=6, type=int)
+        if not (3 <= zero_pad <= 10):
+            raise typer.BadParameter("zero-pad must be between 3 and 10")
+
+    if not apply and not plan:
+        mode = typer.prompt("option (plan/apply)", default="plan").strip().lower()
+        if mode not in {"plan", "apply"}:
+            raise typer.BadParameter("option must be 'plan' or 'apply'")
+        plan = mode == "plan"
+        apply = mode == "apply"
+
     dry_run = _resolve_dry_run(apply, plan)
-    req = RenameBySequenceRequest(root=root, recurse=recurse, zero_pad=zero_pad, dry_run=dry_run)
-    resp = svc_rename_by_sequence(req)
-    verb = "Would rename" if req.dry_run else "Renamed"
-    typer.echo(f"{verb} {resp.renamed_count} file(s) across {resp.groups_count} directorie(s)")
-    for it in resp.items:
-        typer.echo(f"{it.src} -> {it.dst}")
+    req = RenameBySequenceRequest(
+        root=root, recurse=recurse, zero_pad=zero_pad, dry_run=dry_run
+    )
+
+    t_total0 = time.perf_counter()
+    console = Console()
+
+    # ---------- Plan once (time it) ----------
+    t_plan0 = time.perf_counter()
+    with console.status("Planning renames… found 0 files") as status:
+
+        def _on_discover(n: int) -> None:
+            status.update(status=f"Planning renames… found {n} files")
+
+        targets = enumerate_rename_targets(req, on_discover=_on_discover)
+    plan_elapsed = time.perf_counter() - t_plan0
+
+    total = len(targets)
+    if total == 0:
+        typer.echo("No images to rename.")
+        return
+
+    # ---------- PLAN MODE: print full plan, include mapping time ----------
+    if req.dry_run:
+        typer.echo(f"Plan: {total} file(s) will be renamed")
+        for src, dst in targets:
+            typer.echo(f"{src} -> {dst}")
+        elapsed_total = time.perf_counter() - t_total0
+        rate = total / elapsed_total if elapsed_total > 0 else 0.0
+        typer.echo(f"Computed mapping in {plan_elapsed:.2f}s.")
+        typer.echo(
+            f"Would rename {total} file(s) in {elapsed_total:.2f}s (~{rate:.1f} files/s)."
+        )
+        return
+
+    # ---------- APPLY MODE: progress bar; only print failures ----------
+    bar = Progress(
+        TextColumn("[bold]Renaming[/]"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TextColumn("•"),
+        TimeRemainingColumn(),
+        TextColumn("• {task.description}"),
+        console=console,
+    )
+
+    renamed = 0
+    skipped = 0
+    failures: list[tuple[Path, Path, str]] = []  # (src, dst, reason)
+
+    with bar:
+        task = bar.add_task("starting…", total=total)
+        for src, dst, ok, reason in iter_rename_by_sequence(
+            req, targets=targets
+        ):  # reuse plan to avoid double work
+            bar.update(
+                task, advance=1, description=f"{Path(src).name} -> {Path(dst).name}"
+            )
+            if ok:
+                renamed += 1
+            else:
+                skipped += 1
+                failures.append((Path(src), Path(dst), reason or "unknown"))
+
+    # ⬇️ this line will appear immediately after the progress bar
+    console.print(f"Computed mapping in {plan_elapsed:.2f}s.", style="dim")
+
+    # (optional) list only failures
+    if failures:
+        console.print("[bold yellow]Skipped/failed renames:[/bold yellow]")
+        for src, dst, reason in failures:
+            console.print(f"{src} -> {dst}  [yellow]SKIP[/yellow] ({reason})")
+
+    elapsed_total = time.perf_counter() - t_total0
+    rate = total / elapsed_total if elapsed_total > 0 else 0.0
+    summary_style = "bold green" if skipped == 0 else "bold yellow"
+    console.print(
+        f"Renamed {renamed} file(s), skipped {skipped} out of {total} in {elapsed_total:.2f}s (~{rate:.1f} files/s).",
+        style=summary_style,
+    )
 
 
-@cleanup_app.command("sort", help="Sort images by date or location (dry-run by default) or apply with --apply/--plan.")
+@cleanup_app.command(
+    "sort",
+    help="Sort images by date or location (dry-run by default) or apply with --apply/--plan.",
+)
 def cleanup_sort_cmd(
     src_root: Path = typer.Argument(..., exists=True, file_okay=False, dir_okay=True),
-    dst_root: Path | None = typer.Option(None, "--dst-root", "-d", help="Destination root (mirror if omitted)."),
-    strategy: SortStrategy = typer.Option(SortStrategy.by_date, "--strategy", "-s", help="by_date|by_location"),
+    dst_root: Path | None = typer.Option(
+        None, "--dst-root", "-d", help="Destination root (mirror if omitted)."
+    ),
+    strategy: SortStrategy = typer.Option(
+        SortStrategy.by_date, "--strategy", "-s", help="by_date|by_location"
+    ),
     apply: bool = typer.Option(False, "--apply", help="Perform moves."),
     plan: bool = typer.Option(False, "--plan", help="Alias for dry-run (default)."),
 ):
     dry_run = _resolve_dry_run(apply, plan)
-    req = SortRequest(src_root=src_root, dst_root=dst_root, strategy=strategy, dry_run=dry_run)
+    req = SortRequest(
+        src_root=src_root, dst_root=dst_root, strategy=strategy, dry_run=dry_run
+    )
     moves = sort_plan(req) if req.dry_run else sort_apply(req)
     action = "PLAN" if req.dry_run else "APPLY"
     typer.echo(f"[{action}] strategy={strategy} moves={len(moves)}")
@@ -182,15 +335,31 @@ def cleanup_sort_cmd(
 # =========================
 # group: CONVERT (mirrors /convert)
 # =========================
-@convert_app.command("folder-to-jpeg", help="Convert supported images under a folder to JPEG.")
+@convert_app.command(
+    "folder-to-jpeg", help="Convert supported images under a folder to JPEG."
+)
 def convert_folder_to_jpeg_cmd(
     # Interactive prompts kick in when these are omitted:
-    src_root: Path | None = typer.Argument(None, exists=False, file_okay=False, dir_okay=True),
-    dst_root: Path | None = typer.Option(None, "--dst-root", "-d", help="Destination root (mirror if omitted)."),
-    quality: int | None = typer.Option(None, "--quality", "-q", min=1, max=100, help="JPEG quality."),
-    overwrite: bool | None = typer.Option(None, "--overwrite/--no-overwrite", help="Overwrite destination if exists."),
-    recurse: bool | None = typer.Option(None, "--recurse/--no-recurse", help="Scan subfolders."),
-    flatten_alpha: bool | None = typer.Option(None, "--flatten-alpha/--no-flatten-alpha", help="Composite transparency to white."),
+    src_root: Path | None = typer.Argument(
+        None, exists=False, file_okay=False, dir_okay=True
+    ),
+    dst_root: Path | None = typer.Option(
+        None, "--dst-root", "-d", help="Destination root (mirror if omitted)."
+    ),
+    quality: int | None = typer.Option(
+        None, "--quality", "-q", min=1, max=100, help="JPEG quality."
+    ),
+    overwrite: bool | None = typer.Option(
+        None, "--overwrite/--no-overwrite", help="Overwrite destination if exists."
+    ),
+    recurse: bool | None = typer.Option(
+        None, "--recurse/--no-recurse", help="Scan subfolders."
+    ),
+    flatten_alpha: bool | None = typer.Option(
+        None,
+        "--flatten-alpha/--no-flatten-alpha",
+        help="Composite transparency to white.",
+    ),
     apply: bool = typer.Option(False, "--apply", help="Perform writes."),
     plan: bool = typer.Option(False, "--plan", help="Alias for dry-run (default)."),
 ):
@@ -201,7 +370,9 @@ def convert_folder_to_jpeg_cmd(
     if src_root is None:
         src_root = Path(typer.prompt("src (folder to scan)")).expanduser()
     if not src_root.exists() or not src_root.is_dir():
-        raise typer.BadParameter(f"src_root does not exist or is not a directory: {src_root}")
+        raise typer.BadParameter(
+            f"src_root does not exist or is not a directory: {src_root}"
+        )
 
     # You can leave dst_root None — the service defaults to <src>/converted
     if dst_root is None:
@@ -217,13 +388,17 @@ def convert_folder_to_jpeg_cmd(
             raise typer.BadParameter("quality must be between 1 and 100")
 
     if overwrite is None:
-        overwrite = _confirm("overwrite destination files if they already exist?", default=False)
+        overwrite = _confirm(
+            "overwrite destination files if they already exist?", default=False
+        )
 
     if recurse is None:
         recurse = _confirm("recurse into subfolders?", default=True)
 
     if flatten_alpha is None:
-        flatten_alpha = _confirm("flatten alpha (composite transparency to white)?", default=True)
+        flatten_alpha = _confirm(
+            "flatten alpha (composite transparency to white)?", default=True
+        )
 
     if not apply and not plan:
         mode = typer.prompt("option (plan/apply)", default="plan").strip().lower()
@@ -245,15 +420,18 @@ def convert_folder_to_jpeg_cmd(
         return
 
     if dry_run:
-        # -------- PLAN MODE: print the whole plan, no rich/progress --------
+        # -------- PLAN MODE: print the whole plan, no Rich/progress --------
         for src, dst in targets:
             typer.echo(f"{src} -> {dst}")
         elapsed = time.perf_counter() - t0
         rate = total / elapsed if elapsed > 0 else 0.0
-        typer.echo(f"Would convert {total} file(s) in {elapsed:.2f}s (~{rate:.1f} files/s).")
+        typer.echo(
+            f"Would convert {total} file(s) in {elapsed:.2f}s (~{rate:.1f} files/s)."
+        )
         return
 
     # -------- APPLY MODE: show progress bar while converting --------
+    console = Console()
     bar = Progress(
         TextColumn("[bold]Converting[/]"),
         BarColumn(),
@@ -261,13 +439,17 @@ def convert_folder_to_jpeg_cmd(
         TextColumn("•"),
         TimeRemainingColumn(),
         TextColumn("• {task.description}"),
+        console=console,
     )
 
     converted = 0
     skipped = 0
+    # collect only skipped items for the table
+    skipped_results: list[tuple[Path, str | None]] = []
+
     with bar:
         task = bar.add_task("starting…", total=total)
-        for src, dst, ok, _reason in iter_convert_folder(
+        for src, dst, ok, reason in iter_convert_folder(
             src_root=src_root,
             dst_root=dst_root,
             recurse=recurse,
@@ -281,12 +463,30 @@ def convert_folder_to_jpeg_cmd(
                 converted += 1
             else:
                 skipped += 1
+                skipped_results.append((src, reason))
 
     elapsed = time.perf_counter() - t0
     rate = total / elapsed if elapsed > 0 else 0.0
-    typer.echo(f"Converted {converted} file(s), skipped {skipped} out of {total} in {elapsed:.2f}s (~{rate:.1f} files/s).")
 
-@convert_app.command("webp-to-jpeg", help="Convert all .webp images under a folder to JPEG.")
+    # -------- print a rich table only for skipped files --------
+    if skipped_results:
+        table = Table(title="Skipped files", show_lines=False)
+        table.add_column("Source", overflow="fold")
+        table.add_column("Reason", overflow="fold")
+        for src, reason in skipped_results:
+            table.add_row(str(src), reason or "")
+        console.print(table)
+
+    # -------- green summary line --------
+    console.print(
+        f"Converted {converted} file(s), skipped {skipped} out of {total} in {elapsed:.2f}s (~{rate:.1f} files/s).",
+        style="bold green",
+    )
+
+
+@convert_app.command(
+    "webp-to-jpeg", help="Convert all .webp images under a folder to JPEG."
+)
 def convert_webp_to_jpeg_cmd(
     src_root: Path = typer.Argument(..., exists=True, file_okay=False, dir_okay=True),
     dst_root: Path | None = typer.Option(None, "--dst-root", "-d"),

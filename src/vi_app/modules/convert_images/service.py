@@ -1,9 +1,8 @@
 # src/vi_app/modules/convert_images/service.py
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from pathlib import Path
-from typing import Iterator
 
 from PIL import Image, ImageCms
 
@@ -17,28 +16,52 @@ except Exception:
 
 from vi_app.core.paths import mirrored_output_path, sanitize_filename
 
-_SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp", ".heic", ".heif", ".gif"}
+_SUPPORTED_EXTS = {
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".tif",
+    ".tiff",
+    ".bmp",
+    ".webp",
+    ".heic",
+    ".heif",
+    ".gif",
+}
 DEFAULT_CONVERT_SUBDIR = "converted"
+
 
 def _resolve_base_dst(src_root: Path, dst_root: Path | None) -> Path:
     """
     Return the destination base directory. If dst_root is None,
     use <src_root>/converted.
     """
-    return (Path(dst_root).expanduser().resolve()
-            if dst_root is not None
-            else (Path(src_root).expanduser().resolve() / DEFAULT_CONVERT_SUBDIR))
+    return (
+        Path(dst_root).expanduser().resolve()
+        if dst_root is not None
+        else (Path(src_root).expanduser().resolve() / DEFAULT_CONVERT_SUBDIR)
+    )
 
 
-def enumerate_convert_targets(src_root: Path, dst_root: Path | None, recurse: bool) -> list[tuple[Path, Path]]:
+def enumerate_convert_targets(
+    src_root: Path, dst_root: Path | None, recurse: bool
+) -> list[tuple[Path, Path]]:
     src_root = Path(src_root).expanduser().resolve()
     base_dst = _resolve_base_dst(src_root, dst_root)
 
     files: list[Path] = []
     if recurse:
-        files = [p for p in src_root.rglob("*") if p.is_file() and p.suffix.lower() in _SUPPORTED_EXTS]
+        files = [
+            p
+            for p in src_root.rglob("*")
+            if p.is_file() and p.suffix.lower() in _SUPPORTED_EXTS
+        ]
     else:
-        files = [p for p in src_root.iterdir() if p.is_file() and p.suffix.lower() in _SUPPORTED_EXTS]
+        files = [
+            p
+            for p in src_root.iterdir()
+            if p.is_file() and p.suffix.lower() in _SUPPORTED_EXTS
+        ]
 
     pairs: list[tuple[Path, Path]] = []
     for src in files:
@@ -78,6 +101,7 @@ def iter_convert_folder(
         )
         yield (src, dst, ok, reason)
 
+
 def _iter_images(root: Path, recurse: bool = True) -> Iterable[Path]:
     exts = {".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp", ".heic", ".heif"}
     if recurse:
@@ -107,16 +131,20 @@ def _to_jpeg(
         dst.parent.mkdir(parents=True, exist_ok=True)
         with Image.open(src) as im:
             # --- capture metadata BEFORE transforms ---
-            exif_bytes = im.info.get("exif")           # raw EXIF
-            xmp_bytes = im.info.get("xmp")             # raw XMP (requires Pillow >= 11)
-            icc_bytes = im.info.get("icc_profile")     # ICC profile
+            exif_bytes = im.info.get("exif")  # raw EXIF
+            xmp_bytes = im.info.get("xmp")  # raw XMP (requires Pillow >= 11)
+            icc_bytes = im.info.get("icc_profile")  # ICC profile
 
             # --- color management / alpha handling (your existing code) ---
             try:
                 if "icc_profile" in im.info and im.info["icc_profile"]:
                     srgb = ImageCms.createProfile("sRGB")
-                    src_profile = ImageCms.ImageCmsProfile(bytes(im.info["icc_profile"]))
-                    im = ImageCms.profileToProfile(im, src_profile, srgb, outputMode="RGB")
+                    src_profile = ImageCms.ImageCmsProfile(
+                        bytes(im.info["icc_profile"])
+                    )
+                    im = ImageCms.profileToProfile(
+                        im, src_profile, srgb, outputMode="RGB"
+                    )
                     # after converting to sRGB, don't embed the old profile
                     icc_bytes = None
             except Exception:
@@ -141,7 +169,9 @@ def _to_jpeg(
             if exif_bytes:
                 save_kwargs["exif"] = exif_bytes
             if xmp_bytes:
-                save_kwargs["xmp"] = xmp_bytes   # <— this preserves ratings/labels in XMP
+                save_kwargs["xmp"] = (
+                    xmp_bytes  # <— this preserves ratings/labels in XMP
+                )
             if icc_bytes:
                 save_kwargs["icc_profile"] = icc_bytes
 
@@ -167,7 +197,7 @@ def plan_webp_to_jpeg(
     for src in _iter_images(src_root, recurse=True):
         if src.suffix.lower() != ".webp":
             continue
-        new_name = sanitize_filename(src.stem) + ".jpg"
+        new_name = sanitize_filename(src.stem) + ".jpeg"
         dst = mirrored_output_path(src, src_root, dst_root, new_name)
         plan.append((src, dst))
     return plan
@@ -191,10 +221,16 @@ def apply_webp_to_jpeg(
         if dry_run:
             results.append((src, dst, True, "dry_run"))
             continue
-        ok, reason = _to_jpeg(src=src, dst=dst, quality=quality, overwrite=overwrite, flatten_alpha=flatten_alpha, dry_run=False)
+        ok, reason = _to_jpeg(
+            src=src,
+            dst=dst,
+            quality=quality,
+            overwrite=overwrite,
+            flatten_alpha=flatten_alpha,
+            dry_run=False,
+        )
         results.append((src, dst, ok, reason))
     return results
-
 
 
 def plan_convert_folder(
@@ -210,7 +246,7 @@ def plan_convert_folder(
     plan: list[tuple[Path, Path]] = []
     for src in _iter_images(src_root, recurse=recurse):
         # already JPEG with acceptable name → still allow overwrite if asked
-        new_name = sanitize_filename(src.stem) + ".jpg"
+        new_name = sanitize_filename(src.stem) + ".jpeg"
         dst = mirrored_output_path(src, src_root, dst_root, new_name)
         plan.append((src, dst))
     return plan

@@ -7,6 +7,7 @@ import shutil
 from collections.abc import Iterable, Iterator
 from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
 from PIL import Image
 
@@ -14,8 +15,6 @@ from vi_app.core.errors import BadRequest
 from vi_app.core.paths import ensure_within_root
 
 from .schemas import MoveItem, SortRequest, SortStrategy
-
-# import strategies (we'll move the files in step 3)
 from .strategies import by_date as sort_by_date
 from .strategies import by_location as sort_by_location
 
@@ -26,6 +25,10 @@ try:
     register_heif_opener()
 except Exception:
     pass
+
+import os
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .schemas import (
     RenameBySequenceRequest,
@@ -135,18 +138,6 @@ def _select_sort_plan(strategy: SortStrategy):
     return sort_by_date.plan
 
 
-def _unique_path(dst: Path) -> Path:
-    if not dst.exists():
-        return dst
-    stem, suffix = dst.stem, dst.suffix
-    i = 1
-    while True:
-        cand = dst.with_name(f"{stem} ({i}){suffix}")
-        if not cand.exists():
-            return cand
-        i += 1
-
-
 def _safe_move(src: Path, dst: Path) -> None:
     """Rename if possible; if cross-device (EXDEV), copy+delete. Avoid clobbering."""
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -182,7 +173,7 @@ def sort_apply(req: SortRequest) -> list[MoveItem]:
     return [MoveItem(src=str(s), dst=str(d)) for s, d in moves]
 
 
-def _iter_dirs(root: Path, recurse: bool) -> Iterator[Path]:
+def _walk_dirs(root: Path, recurse: bool) -> Iterator[Path]:
     root = root.resolve()
     yield root
     if recurse:
@@ -260,28 +251,6 @@ def _get_datetime_taken(path: Path) -> datetime | None:
     return None
 
 
-def _sequence_names(
-    dir_path: Path, files: list[Path], zero_pad: int
-) -> list[tuple[Path, Path]]:
-    """
-    Decide the new names within a single directory. Sort by date taken (asc), then name.
-    Returns (src, dst) pairs. Keeps original extension, normalizes to upper-case 'IMG_' prefix.
-    """
-    # Sort files by (date_taken, name)
-    with_dates = []
-    for p in files:
-        dt = _get_datetime_taken(p) or datetime.min
-        with_dates.append((dt, p))
-    with_dates.sort(key=lambda t: (t[0], t[1].name.lower()))
-
-    pairs: list[tuple[Path, Path]] = []
-    for idx, (_, p) in enumerate(with_dates, start=1):
-        seq = f"{idx:0{zero_pad}d}"
-        new_name = f"IMG_{seq}{p.suffix.upper()}"
-        pairs.append((p, dir_path / new_name))
-    return pairs
-
-
 def _unique_path(dst: Path) -> Path:
     if not dst.exists():
         return dst
@@ -292,6 +261,20 @@ def _unique_path(dst: Path) -> Path:
         if not cand.exists():
             return cand
         i += 1
+
+
+def _stage_path_for(src: Path) -> Path:
+    """
+    Create a unique temporary path in the same directory as `src`.
+    Using a reserved marker so we can recognize temps if needed.
+    """
+    parent = src.parent
+    stem, suffix = src.stem, src.suffix
+    # Example: IMG_000123.__vi_tmp__a1b2c3d4.PNG
+    while True:
+        candidate = parent / f"{stem}.__vi_tmp__{uuid4().hex[:8]}{suffix}"
+        if not candidate.exists():
+            return candidate
 
 
 def _safe_rename(src: Path, dst: Path) -> None:
@@ -316,57 +299,194 @@ def _safe_rename(src: Path, dst: Path) -> None:
             raise
 
 
-def rename_by_sequence_plan(req: RenameBySequenceRequest) -> list[RenamedItem]:
+def rename_by_sequence_plan(
+    req: RenameBySequenceRequest,
+    on_discover: Callable[[int], None] | None = None,
+) -> list[RenamedItem]:
     root = Path(req.root).resolve()
     items: list[RenamedItem] = []
-    for d in _iter_dirs(root, req.recurse):
+    discovered = 0  # <--- add this
+
+    # use the renamed walker to avoid clobbering _iter_dirs used elsewhere
+    for d in _walk_dirs(root, req.recurse):
         files = _iter_images(d)
         if not files:
             continue
+
+        # live discovery callback (updates the spinner text)
+        discovered += len(files)
+        if on_discover:
+            on_discover(discovered)
+
         for src, dst in _sequence_names(d, files, req.zero_pad):
             if src.name == dst.name:
-                # Already in correct format/position
                 continue
             items.append(RenamedItem(src=str(src), dst=str(dst)))
     return items
 
 
-def rename_by_sequence_apply(req: RenameBySequenceRequest) -> list[RenamedItem]:
-    planned = rename_by_sequence_plan(req)
-    # To avoid chain conflicts (A->B while B->C), do a two-phase rename:
-    # 1) Temp-stamp each source to a hidden/unique intermediary within the same dir
-    # 2) Move from temp to final name
-    # This is robust and avoids overwrite/cycle issues.
+def rename_by_sequence_apply(req: RenameBySequenceRequest) -> RenameBySequenceResponse:
+    targets = enumerate_rename_targets(req)
+    results = _apply_two_phase(targets)
 
-    # Phase 1: create temporary unique names
-    temp_pairs: list[tuple[Path, Path]] = []
-    for it in planned:
-        src = Path(it.src)
-        tmp = src.with_name(f".___tmp___{src.name}")
-        # ensure uniqueness
-        if tmp.exists():
-            tmp = _unique_path(tmp)
-        src.rename(tmp)
-        temp_pairs.append((tmp, Path(it.dst)))
+    # Build response from successful items
+    items = [
+        RenamedItem(src=str(src), dst=str(final)) for src, final, ok, _ in results if ok
+    ]
+    groups_count = len({Path(src).parent for src, _, ok, _ in results if ok})
+    renamed_count = len(items)
 
-    # Phase 2: move to final destinations
-    for tmp, final in temp_pairs:
-        _safe_rename(tmp, final)
-
-    return planned
+    return RenameBySequenceResponse(
+        items=items,
+        groups_count=groups_count,
+        renamed_count=renamed_count,
+    )
 
 
 def rename_by_sequence(req: RenameBySequenceRequest) -> RenameBySequenceResponse:
-    items = (
-        rename_by_sequence_plan(req) if req.dry_run else rename_by_sequence_apply(req)
+    if req.dry_run:
+        items = rename_by_sequence_plan(req)  # list[RenamedItem]
+        groups = {str(Path(i.dst).parent) for i in items}
+        return RenameBySequenceResponse(
+            dry_run=True,
+            groups_count=len(groups),
+            files_count=len(items),
+            renamed_count=0,  # plan => no renames performed yet
+            items=items,
+        )
+    else:
+        # apply path already returns RenameBySequenceResponse
+        return rename_by_sequence_apply(req)
+
+
+def enumerate_rename_targets(
+    req: RenameBySequenceRequest,
+    on_discover: Callable[[int], None] | None = None,
+) -> list[tuple[Path, Path]]:
+    plan_req = RenameBySequenceRequest(
+        root=req.root, recurse=req.recurse, zero_pad=req.zero_pad, dry_run=True
     )
-    # Count groups: # of distinct directories that had at least one item
-    groups = {str(Path(i.dst).parent) for i in items} or set()
-    # Files considered = number of renames (we only count renamable files); if you want total files scanned, adjust.
-    return RenameBySequenceResponse(
-        dry_run=req.dry_run,
-        groups_count=len(groups),
-        files_count=len(items),
-        renamed_count=len(items) if not req.dry_run else len(items),
-        items=items,
-    )
+    # call the plan with the live-discovery callback
+    items = rename_by_sequence_plan(plan_req, on_discover=on_discover)
+    return [(Path(it.src), Path(it.dst)) for it in items]
+
+
+def _apply_two_phase(
+    targets: list[tuple[Path, Path]],
+) -> list[tuple[Path, Path, bool, str | None]]:
+    """
+    Execute a two-phase rename for all targets:
+      1) stage:  src -> tmp (in same folder)
+      2) final:  tmp -> dst  (dst uniquified if pre-existing)
+    Returns a list of (original_src, final_dst, ok, reason).
+    """
+    results: list[tuple[Path, Path, bool, str | None]] = []
+    staged: list[tuple[Path, Path, Path]] = []  # (orig_src, tmp, dst)
+
+    # Phase 1: stage everything
+    for src, dst in targets:
+        try:
+            if src.resolve() == dst.resolve():
+                # Already named as desired
+                results.append((src, dst, False, "already_named"))
+                continue
+
+            tmp = _stage_path_for(src)
+            src.rename(tmp)
+            staged.append((src, tmp, dst))
+        except Exception as e:
+            results.append((src, dst, False, f"stage_error:{e.__class__.__name__}"))
+
+    # Phase 2: move staged -> final (respect existing files by uniquifying)
+    for orig_src, tmp, dst in staged:
+        try:
+            final = dst
+            try:
+                # If something already occupies the target name, pick a unique underscore path
+                if final.exists() and tmp.resolve() != final.resolve():
+                    final = _unique_path(final)  # your underscore-style helper
+            except Exception:
+                final = _unique_path(final)
+
+            tmp.rename(final)
+            results.append((orig_src, final, True, None))
+        except Exception as e:
+            # Best-effort rollback to original name (avoid leaving tmp files)
+            try:
+                if not orig_src.exists() and tmp.exists():
+                    tmp.rename(orig_src)
+            except Exception:
+                pass
+            results.append(
+                (orig_src, dst, False, f"final_error:{e.__class__.__name__}")
+            )
+
+    return results
+
+
+def iter_rename_by_sequence(
+    req: RenameBySequenceRequest,
+    targets: list[tuple[Path, Path]] | None = None,
+) -> Iterator[tuple[Path, Path, bool, str | None]]:
+    """
+    Iterate through the prepared plan and perform a two-phase rename.
+    Yields (original_src, final_dst, ok, reason).
+    """
+    if targets is None:
+        targets = enumerate_rename_targets(req)
+
+    if req.dry_run:
+        for src, dst in targets:
+            yield (src, dst, True, "dry_run")
+        return
+
+    # Two-phase apply; yield per file after the final move
+    for src, final, ok, reason in _apply_two_phase(targets):
+        yield (src, final, ok, reason)
+
+
+def _auto_worker_count() -> int:
+    """
+    Choose a sensible default number of threads for I/O-bound metadata reads.
+    Override via env VI_RENAME_WORKERS, e.g. VI_RENAME_WORKERS=12.
+    """
+    override = os.getenv("VI_RENAME_WORKERS")
+    if override:
+        try:
+            n = int(override)
+            return max(1, min(64, n))
+        except ValueError:
+            pass
+    ncpu = os.cpu_count() or 4
+    return max(4, min(16, ncpu * 2))  # I/O-bound heuristic
+
+
+def _sequence_names(
+    dir_path: Path, files: list[Path], zero_pad: int
+) -> list[tuple[Path, Path]]:
+    """
+    Decide the new names within a single directory. Sort by date taken (asc), then name.
+    Returns (src, dst) pairs. Keeps original extension, normalizes to upper-case 'IMG_' prefix.
+    Parallelized date extraction for speed.
+    """
+    # --- collect (dt, path) in parallel ---
+    results: list[tuple[datetime, Path]] = []
+    workers = _auto_worker_count()
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = {ex.submit(_get_datetime_taken, p): p for p in files}
+        for fut in as_completed(futs):
+            p = futs[fut]
+            try:
+                dt = fut.result() or datetime.min
+            except Exception:
+                dt = datetime.min
+            results.append((dt, p))
+
+    # --- sort and build pairs ---
+    results.sort(key=lambda t: (t[0], t[1].name.lower()))
+    pairs: list[tuple[Path, Path]] = []
+    for idx, (_, p) in enumerate(results, start=1):
+        seq = f"{idx:0{zero_pad}d}"
+        new_name = f"IMG_{seq}{p.suffix.upper()}"
+        pairs.append((p, dir_path / new_name))
+    return pairs
