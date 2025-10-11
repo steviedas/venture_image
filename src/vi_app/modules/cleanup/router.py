@@ -10,6 +10,7 @@ from vi_app.core.errors import to_http
 from .schemas import (
     FindMarkedDupesRequest,
     FindMarkedDupesResponse,
+    MoveItem,
     RemoveFilesRequest,
     RemoveFilesResponse,
     RemoveFoldersRequest,
@@ -18,68 +19,47 @@ from .schemas import (
     RenameBySequenceRequest,
     RenameBySequenceResponse,
     SortRequest,
-    SortResponse,
 )
 from .service import (
-    find_marked_dupes,
-    remove_files,
-    remove_folders,
-    # existing service funcs...
-    rename_by_sequence,
-    sort_apply,
-    sort_plan,
+    FindMarkedDupesService,
+    RemoveFilesService,
+    RemoveFoldersService,
+    RenameService,
+    SortService,
 )
 
 router = APIRouter(prefix="/cleanup", tags=["cleanup"])
 
 
 @router.post(
-    path="/remove-files",
+    "/remove-files",
     response_model=RemoveFilesResponse,
-    summary="Find and (optionally) delete files matching regex patterns",
-    description=(
-        "Recursively scans **root** and selects files whose full path matches any of "
-        "the provided case-insensitive **regular expressions** in `patterns`. "
-        "If `dry_run` is `true`, the endpoint only reports what *would* be deleted. "
-        "When `dry_run` is `false`, it deletes the matched files and, if "
-        "`remove_empty_dirs` is `true`, prunes any now-empty directories. "
-        "Safety guardrails ensure deletions remain within `root`.\n\n"
-        "**Note:** patterns are regex (not globs). Examples: `\\.tmp$`, "
-        "`_dupe\\(\\d+\\)`, `(?i)thumbs\\.db$`."
-    ),
+    summary="Remove files by pattern",
+    description="Delete files matching glob/regex/substring patterns. Supports dry-run and optional empty dir pruning.",
 )
-def remove_files_endpoint(req: RemoveFilesRequest) -> RemoveFilesResponse:
+def remove_files_endpoint(req: RemoveFilesRequest):
     try:
-        deleted = remove_files(
-            Path(req.root), req.patterns, req.dry_run, req.remove_empty_dirs
-        )
+        svc = RemoveFilesService(Path(req.root))
+        deleted = svc.run(req.patterns, req.dry_run, req.remove_empty_dirs)
         return RemoveFilesResponse(
-            count=len(deleted),
-            paths=[str(p) for p in deleted],
-            dry_run=req.dry_run,
+            count=len(deleted), paths=deleted, dry_run=req.dry_run
         )
     except Exception as err:
         raise to_http(err) from err
 
 
 @router.post(
-    path="/remove-folders",
+    "/remove-folders",
     response_model=RemoveFoldersResponse,
-    summary="Find and (optionally) remove directories by name",
-    description=(
-        "Recursively scans `root` for directories whose **name** matches any in "
-        "`folder_names` (case-insensitive). If `dry_run` is true, it only reports the "
-        "directories that would be removed. If false, it removes each matched directory "
-        "and its entire subtree. Safety checks ensure paths remain within `root`."
-    ),
+    summary="Remove whole folders by name",
+    description="Delete folders (recursively) whose base name matches. Supports dry-run.",
 )
-def remove_folders_endpoint(req: RemoveFoldersRequest) -> RemoveFoldersResponse:
+def remove_folders_endpoint(req: RemoveFoldersRequest):
     try:
-        removed = remove_folders(Path(req.root), req.folder_names, req.dry_run)
+        svc = RemoveFoldersService(Path(req.root))
+        removed = svc.run(req.folder_names, req.dry_run)
         return RemoveFoldersResponse(
-            count=len(removed),
-            paths=[str(p) for p in removed],
-            dry_run=req.dry_run,
+            count=len(removed), paths=removed, dry_run=req.dry_run
         )
     except Exception as err:
         raise to_http(err) from err
@@ -88,60 +68,51 @@ def remove_folders_endpoint(req: RemoveFoldersRequest) -> RemoveFoldersResponse:
 @router.post(
     "/find-marked-dupes",
     response_model=FindMarkedDupesResponse,
-    summary="List files marked as duplicates by a filename-suffix regex",
-    description=(
-        "Recursively scans `root` and returns files whose **filename stem** "
-        "(without extension) matches `suffix_pattern` (regex). "
-        "Useful for locating files previously marked like `*_dupe(1)`."
-    ),
+    summary="Find files that look like duplicates by name pattern",
+    description="Search for common duplicate markers (e.g. 'copy', '(1)') via regex/substring.",
 )
-def find_marked_dupes_endpoint(req: FindMarkedDupesRequest) -> FindMarkedDupesResponse:
+def find_marked_dupes_endpoint(req: FindMarkedDupesRequest):
     try:
-        items = find_marked_dupes(Path(req.root), req.suffix_pattern)
-        return FindMarkedDupesResponse(count=len(items), paths=[str(p) for p in items])
+        svc = FindMarkedDupesService(Path(req.root))
+        items = svc.run(req.suffix_pattern)
+        return FindMarkedDupesResponse(count=len(items), paths=items)
     except Exception as err:
         raise to_http(err) from err
 
 
 @router.post(
-    path="/sort",
-    response_model=SortResponse,
-    summary="Sort images (by date or location) as part of cleanup",
-    description=(
-        "Plan or apply sorting of images under `src_root` using the selected `strategy`.\n\n"
-        "- `by_date` → `YYYY/MM/filename`\n"
-        "- `by_location` → `City_Country/filename` (falls back to Country or `Unknown`)\n\n"
-        "`dry_run=true` returns planned moves only; `dry_run=false` applies them."
-    ),
+    "/sort",
+    response_model=list[MoveItem],
+    summary="Sort images (by date or location)",
+    description="Plan or apply moving images to structured folders. Respect dry-run.",
 )
-def cleanup_sort_endpoint(req: SortRequest) -> SortResponse:
+def sort_endpoint(req: SortRequest):
     try:
-        moves = sort_plan(req) if req.dry_run else sort_apply(req)
-        return SortResponse(
-            dry_run=req.dry_run,
-            strategy=req.strategy,
-            moves_count=len(moves),
-            moves=moves,
-        )
+        svc = SortService(Path(req.src_root))
+        moves = svc.plan(req) if req.dry_run else svc.apply(req)
+        return moves
     except Exception as err:
         raise to_http(err) from err
 
 
 @router.post(
-    path="/rename",
+    "/rename",
     response_model=RenameBySequenceResponse,
-    summary="Rename images in each directory to IMG_XXXXXX ordered by date taken",
-    description=(
-        "For each directory (and sub-directory when `recurse=true`), sort images by "
-        "**date taken** (EXIF DateTimeOriginal/Digitized/DateTime). If missing, fall back to the earliest "
-        "available filesystem timestamp. Then rename within that directory to `IMG_000001`, `IMG_000002`, ... "
-        "preserving the original file extension and resetting the sequence **per directory**.\n\n"
-        "When `dry_run=true` (default), returns the planned renames only. "
-        "When `dry_run=false`, performs the renames safely (two-phase to avoid collisions)."
-    ),
+    summary="Per directory, rename images to IMG_XXXXXX ordered by date taken",
+    description="Stable, deterministic renaming with two-phase apply. Dry-run prints the full plan.",
 )
-def rename_sequence_endpoint(req: RenameBySequenceRequest) -> RenameBySequenceResponse:
+def rename_endpoint(req: RenameBySequenceRequest):
     try:
-        return rename_by_sequence(req)
+        svc = RenameService(Path(req.root), recurse=req.recurse, zero_pad=req.zero_pad)
+        if req.dry_run:
+            items = svc.plan()
+            groups = {str(Path(i.dst).parent) for i in items}
+            return RenameBySequenceResponse(
+                items=items,
+                groups_count=len(groups),
+                renamed_count=0,
+                dry_run=True,
+            )
+        return svc.apply()
     except Exception as err:
         raise to_http(err) from err

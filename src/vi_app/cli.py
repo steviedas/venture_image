@@ -23,19 +23,11 @@ from vi_app.modules.cleanup.schemas import (
     SortStrategy,
 )
 from vi_app.modules.cleanup.service import (
-    enumerate_rename_targets,
-    iter_rename_by_sequence,
-    sort_apply,
-    sort_plan,
-)
-from vi_app.modules.cleanup.service import (
-    find_marked_dupes as svc_find_marked_dupes,
-)
-from vi_app.modules.cleanup.service import (
-    remove_files as svc_remove_files,
-)
-from vi_app.modules.cleanup.service import (
-    remove_folders as svc_remove_folders,
+    FindMarkedDupesService,
+    RemoveFilesService,
+    RemoveFoldersService,
+    RenameService,
+    SortService,
 )
 from vi_app.modules.convert_images.schemas import WebpToJpegRequest
 from vi_app.modules.convert_images.service import (
@@ -135,9 +127,8 @@ def cleanup_remove_files_cmd(
     req = RemoveFilesRequest(
         root=root, patterns=pattern, dry_run=dry_run, remove_empty_dirs=prune_empty
     )
-    deleted = svc_remove_files(
-        Path(req.root), req.patterns, req.dry_run, req.remove_empty_dirs
-    )
+    svc = RemoveFilesService(Path(req.root))
+    deleted = svc.run(req.patterns, req.dry_run, req.remove_empty_dirs)
     verb = "Would remove" if req.dry_run else "Removed"
     typer.echo(f"{verb} {len(deleted)} file(s)")
     for p in deleted:
@@ -157,7 +148,8 @@ def cleanup_remove_folders_cmd(
 ):
     dry_run = _resolve_dry_run(apply, plan)
     req = RemoveFoldersRequest(root=root, folder_names=name, dry_run=dry_run)
-    removed = svc_remove_folders(Path(req.root), req.folder_names, req.dry_run)
+    svc = RemoveFoldersService(Path(req.root))
+    removed = svc.run(req.folder_names, req.dry_run)
     verb = "Would remove" if req.dry_run else "Removed"
     typer.echo(f"{verb} {len(removed)} directorie(s)")
     for p in removed:
@@ -179,7 +171,8 @@ def cleanup_find_marked_dupes_cmd(
 ):
     # This command is read-only; support --plan for consistency, but ignore its value.
     req = FindMarkedDupesRequest(root=root, suffix_pattern=suffix_pattern)
-    items = svc_find_marked_dupes(Path(req.root), req.suffix_pattern)
+    svc = FindMarkedDupesService(Path(req.root))
+    items = svc.run(req.suffix_pattern)
     typer.echo(f"Found {len(items)} file(s)")
     for p in items:
         typer.echo(str(p))
@@ -233,12 +226,15 @@ def cleanup_rename_cmd(
 
     # ---------- Plan once (time it) ----------
     t_plan0 = time.perf_counter()
+    svc = RenameService(root=root, recurse=recurse, zero_pad=zero_pad)
+
     with console.status("Planning renames… found 0 files") as status:
 
         def _on_discover(n: int) -> None:
             status.update(status=f"Planning renames… found {n} files")
 
-        targets = enumerate_rename_targets(req, on_discover=_on_discover)
+        targets = svc.enumerate_targets(on_discover=_on_discover)
+
     plan_elapsed = time.perf_counter() - t_plan0
 
     total = len(targets)
@@ -276,9 +272,7 @@ def cleanup_rename_cmd(
 
     with bar:
         task = bar.add_task("starting…", total=total)
-        for src, dst, ok, reason in iter_rename_by_sequence(
-            req, targets=targets
-        ):  # reuse plan to avoid double work
+        for src, dst, ok, reason in svc.iter_apply(targets=targets):
             bar.update(
                 task, advance=1, description=f"{Path(src).name} -> {Path(dst).name}"
             )
@@ -325,7 +319,8 @@ def cleanup_sort_cmd(
     req = SortRequest(
         src_root=src_root, dst_root=dst_root, strategy=strategy, dry_run=dry_run
     )
-    moves = sort_plan(req) if req.dry_run else sort_apply(req)
+    svc = SortService(Path(req.src_root))
+    moves = svc.plan(req) if req.dry_run else svc.apply(req)
     action = "PLAN" if req.dry_run else "APPLY"
     typer.echo(f"[{action}] strategy={strategy} moves={len(moves)}")
     for m in moves:
