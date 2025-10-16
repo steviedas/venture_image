@@ -75,11 +75,9 @@ cli-cleanup-sort src="" dst="" strategy="by_date" option="plan":
 # -------------
 # CONVERT
 # -------------
+
 cli-convert-folder-to-jpeg:
     uv run vi convert folder-to-jpeg
 
-# convert only .webp to jpeg, mirror into dst
-cli-convert-webp-to-jpeg src="" dst="" quality="100" overwrite="false" flatten="true" option="plan":
-    O=$([ "{{overwrite}}" = "true" ] && echo --overwrite || echo --no-overwrite); \
-    F=$([ "{{flatten}}" = "true" ] && echo --flatten-alpha || echo --no-flatten-alpha); \
-    uv run vi convert webp-to-jpeg "{{src}}" -d "{{dst}}" -q {{quality}} ${O} ${F} --{{option}}
+cli-convert-webp-to-jpeg:
+    uv run vi convert webp-to-jpeg

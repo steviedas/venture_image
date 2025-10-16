@@ -9,8 +9,7 @@ from vi_app.core.errors import to_http
 
 from .schemas import ConversionResult, ConvertFolderRequest, WebpToJpegRequest
 from .service import (
-    apply_convert_folder,
-    apply_webp_to_jpeg,
+    ConvertService,
 )
 
 router = APIRouter(prefix="/convert", tags=["convert"])
@@ -20,23 +19,24 @@ router = APIRouter(prefix="/convert", tags=["convert"])
     path="/webp-to-jpeg",
     response_model=list[ConversionResult],
     summary="Convert all .webp images under a folder to JPEG",
-    description=(
-        "Recursively scans `src_root` for `.webp` images and converts them to JPEG, "
-        "mirroring the directory structure under `dst_root` (or `src_root` if omitted). "
-        "Respects `overwrite` (skip when destination exists unless true), "
-        "and `flatten_alpha` (composite transparency onto white). "
-        "When `dry_run` is true, no files are written—only the planned results are returned."
-    ),
 )
 def webp_to_jpeg(req: WebpToJpegRequest) -> list[ConversionResult]:
     try:
-        results = apply_webp_to_jpeg(
-            Path(req.src_root),
-            Path(req.dst_root) if req.dst_root else None,
-            req.quality,
-            req.overwrite,
-            req.flatten_alpha,
-            req.dry_run,
+        svc = ConvertService(
+            src_root=Path(req.src_root),
+            dst_root=Path(req.dst_root) if req.dst_root else None,
+            recurse=True,
+            quality=req.quality,
+            overwrite=req.overwrite,
+            flatten_alpha=req.flatten_alpha,
+            only_exts={".webp"},
+            dry_run=req.dry_run,
+        )
+        targets = svc.enumerate_targets()
+        results = (
+            [(s, d, True, "dry_run") for s, d in targets]
+            if req.dry_run
+            else list(svc.iter_apply(targets=targets))
         )
         return [
             ConversionResult(src=str(src), dst=str(dst), converted=ok, reason=reason)
@@ -50,25 +50,24 @@ def webp_to_jpeg(req: WebpToJpegRequest) -> list[ConversionResult]:
     path="/folder-to-jpeg",
     response_model=list[ConversionResult],
     summary="Convert all supported images in a folder to JPEG",
-    description=(
-        "Scans `src_root` for supported formats (e.g., PNG, WEBP, TIFF, HEIC/HEIF*) and converts "
-        "each to JPEG, mirroring the source directory structure under `dst_root` (or `src_root` if omitted). "
-        "Honors `overwrite` (skip when destination exists unless true), `recurse` (include subfolders), and "
-        "`flatten_alpha` (composite transparency onto white). When `dry_run` is true, no files are written—"
-        "the endpoint returns the planned results only.\n\n"
-        "*HEIC/HEIF conversion requires the `pillow-heif` plugin to be available in the environment."
-    ),
 )
 def folder_to_jpeg(req: ConvertFolderRequest) -> list[ConversionResult]:
     try:
-        results = apply_convert_folder(
-            Path(req.src_root),
-            Path(req.dst_root) if req.dst_root else None,
-            req.recurse,
-            req.quality,
-            req.overwrite,
-            req.flatten_alpha,
-            req.dry_run,
+        svc = ConvertService(
+            src_root=Path(req.src_root),
+            dst_root=Path(req.dst_root) if req.dst_root else None,
+            recurse=req.recurse,
+            quality=req.quality,
+            overwrite=req.overwrite,
+            flatten_alpha=req.flatten_alpha,
+            only_exts=None,
+            dry_run=req.dry_run,
+        )
+        targets = svc.enumerate_targets()
+        results = (
+            [(s, d, True, "dry_run") for s, d in targets]
+            if req.dry_run
+            else list(svc.iter_apply(targets=targets))
         )
         return [
             ConversionResult(src=str(src), dst=str(dst), converted=ok, reason=reason)
