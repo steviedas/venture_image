@@ -44,9 +44,9 @@ cli:
 # -------------
 # DEDUP
 # -------------
-# STRATEGY: content | metadata
-cli-dedup-run path="" strategy="content" move_to="" option="plan":
-    uv run vi dedup run "{{path}}" --strategy "{{strategy}}" $([ -n "{{move_to}}" ] && echo --move-to "\"{{move_to}}\"" || true) --{{option}}
+
+cli-dedup:
+    uv run vi dedup
 
 # -------------
 # CLEANUP
