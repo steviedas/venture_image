@@ -20,7 +20,6 @@ from vi_app.modules.cleanup.schemas import (
     FindMarkedDupesRequest,
     RemoveFilesRequest,
     RemoveFoldersRequest,
-    RenameBySequenceRequest,
     SortRequest,
     SortStrategy,
 )
@@ -33,13 +32,12 @@ from vi_app.modules.cleanup.service import (
 )
 
 # --- Convert module ---
-from vi_app.modules.convert_images.service import ConvertService
+from vi_app.modules.convert.service import ConvertService
 
 # --- Dedup module ---
 from vi_app.modules.dedup.schemas import DedupRequest, DedupStrategy
 from vi_app.modules.dedup.service import apply as dedup_apply
 from vi_app.modules.dedup.service import plan as dedup_plan
-
 
 app = typer.Typer(help="Venture Image CLI")
 
@@ -70,21 +68,25 @@ def _resolve_dry_run(apply: bool, plan: bool) -> bool:
 # group: DEDUP (mirrors /dedup)
 # =========================
 
+
 class _RichReporter:
     """Bridge the service's ProgressReporter interface to a Rich Progress instance."""
+
     def __init__(self, progress: Progress) -> None:
         self.progress = progress
         self.tasks: dict[str, int] = {}
         self.labels = {
-            "scan":   "Scanning",
-            "hash":   "Hashing",
+            "scan": "Scanning",
+            "hash": "Hashing",
             "bucket": "Bucketing",
-            "cluster":"Clustering",
+            "cluster": "Clustering",
             "select": "Selecting",
-            "move":   "Moving",
+            "move": "Moving",
         }
 
-    def start(self, phase: str, total: int | None = None, text: str | None = None) -> None:
+    def start(
+        self, phase: str, total: int | None = None, text: str | None = None
+    ) -> None:
         label = self.labels.get(phase, phase.title())
         desc = f"{label}"
         # Add a custom field 'detail' so we can render it after TimeRemainingColumn
@@ -111,13 +113,14 @@ class _RichReporter:
         else:
             self.progress.update(task_id, visible=False, detail="")
 
+
 def _dedup_run_interactive(
     root: Path | None = None,
     strategy: DedupStrategy | None = None,
     move_to: Path | None = None,
     apply: bool = False,
     plan: bool = False,
-    show_table: bool = False,   # NEW: default off
+    show_table: bool = False,  # NEW: default off
 ):
     # ---------- Interactive prompts ----------
     if root is None:
@@ -126,7 +129,11 @@ def _dedup_run_interactive(
         raise typer.BadParameter(f"root does not exist or is not a directory: {root}")
 
     if strategy is None:
-        choice = typer.prompt("strategy (content/metadata)", default="content").strip().lower()
+        choice = (
+            typer.prompt("strategy (content/metadata)", default="content")
+            .strip()
+            .lower()
+        )
         if choice not in {"content", "metadata"}:
             raise typer.BadParameter("strategy must be 'content' or 'metadata'")
         strategy = DedupStrategy(choice)
@@ -135,8 +142,8 @@ def _dedup_run_interactive(
         mode = typer.prompt("option (plan/apply)", default="plan").strip().lower()
         if mode not in {"plan", "apply"}:
             raise typer.BadParameter("option must be 'plan' or 'apply'")
-        plan = (mode == "plan")
-        apply = (mode == "apply")
+        plan = mode == "plan"
+        apply = mode == "apply"
 
     dry_run = _resolve_dry_run(apply, plan)
 
@@ -170,7 +177,11 @@ def _dedup_run_interactive(
 
     t0 = time.perf_counter()
     with progress:
-        clusters = dedup_plan(req, reporter=reporter) if req.dry_run else dedup_apply(req, reporter=reporter)
+        clusters = (
+            dedup_plan(req, reporter=reporter)
+            if req.dry_run
+            else dedup_apply(req, reporter=reporter)
+        )
     elapsed = time.perf_counter() - t0
 
     total_dups = sum(len(c.duplicates) for c in clusters)
@@ -198,12 +209,22 @@ def _dedup_run_interactive(
     help="Detect duplicates (dry-run by default) or move them with --apply / plan with --plan.",
 )
 def dedup_run(
-    root: Path | None = typer.Argument(None, exists=False, file_okay=False, dir_okay=True),
-    strategy: DedupStrategy | None = typer.Option(None, "--strategy", "-s", help="content|metadata"),
-    move_to: Path | None = typer.Option(None, "--move-to", "-m", help="Where to move duplicates when applying."),
+    root: Path | None = typer.Argument(
+        None, exists=False, file_okay=False, dir_okay=True
+    ),
+    strategy: DedupStrategy | None = typer.Option(
+        None, "--strategy", "-s", help="content|metadata"
+    ),
+    move_to: Path | None = typer.Option(
+        None, "--move-to", "-m", help="Where to move duplicates when applying."
+    ),
     apply: bool = typer.Option(False, "--apply", help="Perform moves."),
     plan: bool = typer.Option(False, "--plan", help="Alias for dry-run (default)."),
-    show_table: bool = typer.Option(False, "--show-table/--no-show-table", help="Print the duplicate clusters table."),
+    show_table: bool = typer.Option(
+        False,
+        "--show-table/--no-show-table",
+        help="Print the duplicate clusters table.",
+    ),
 ):
     return _dedup_run_interactive(
         root=root,
@@ -211,8 +232,9 @@ def dedup_run(
         move_to=move_to,
         apply=apply,
         plan=plan,
-        show_table=show_table,   # pass through
+        show_table=show_table,  # pass through
     )
+
 
 @dedup_app.callback(invoke_without_command=True)
 def _dedup_default(ctx: typer.Context):
@@ -307,8 +329,12 @@ def cleanup_rename_cmd(
         None, "--recurse/--no-recurse", help="Process subdirectories."
     ),
     zero_pad: int | None = typer.Option(
-        None, "--zero-pad", "-z", min=3, max=10,
-        help="Digits in sequence for BOTH images and videos."
+        None,
+        "--zero-pad",
+        "-z",
+        min=3,
+        max=10,
+        help="Digits in sequence for BOTH images and videos.",
     ),
     apply: bool = typer.Option(False, "--apply", help="Perform renames."),
     plan: bool = typer.Option(False, "--plan", help="Alias for dry-run (default)."),
@@ -324,7 +350,9 @@ def cleanup_rename_cmd(
 
     # Single prompt for both images and videos
     if zero_pad is None:
-        zero_pad = typer.prompt("Digits in sequence (3-10) for BOTH images and videos", default=6, type=int)
+        zero_pad = typer.prompt(
+            "Digits in sequence (3-10) for BOTH images and videos", default=6, type=int
+        )
         if not (3 <= zero_pad <= 10):
             raise typer.BadParameter("zero-pad must be between 3 and 10")
 
@@ -347,8 +375,10 @@ def cleanup_rename_cmd(
     t_plan0 = time.perf_counter()
     svc = RenameService(root=root, recurse=recurse, zero_pad=zero_pad)
     with console.status("Planning image renames… found 0 files") as status:
+
         def _on_discover(n: int) -> None:
             status.update(status=f"Planning image renames… found {n} files")
+
         img_targets = svc.enumerate_targets(on_discover=_on_discover)
     img_plan_elapsed = time.perf_counter() - t_plan0
 
@@ -376,13 +406,17 @@ def cleanup_rename_cmd(
         with bar:
             task = bar.add_task("starting…", total=img_total)
             for src, dst, ok, reason in svc.iter_apply(targets=img_targets):
-                bar.update(task, advance=1, description=f"{Path(src).name} -> {Path(dst).name}")
+                bar.update(
+                    task, advance=1, description=f"{Path(src).name} -> {Path(dst).name}"
+                )
                 if ok:
                     renamed += 1
                 else:
                     skipped += 1
                     failures.append((Path(src), Path(dst), reason or "unknown"))
-        console.print(f"Computed image mapping in {img_plan_elapsed:.2f}s.", style="dim")
+        console.print(
+            f"Computed image mapping in {img_plan_elapsed:.2f}s.", style="dim"
+        )
         if failures:
             console.print("[bold yellow]Skipped/failed image renames:[/bold yellow]")
             for src, dst, reason in failures:
@@ -404,7 +438,7 @@ def cleanup_rename_cmd(
         zero_pad=zero_pad,
         on_discover=lambda n: None,
     )
-    vid_plan_elapsed = time.perf_counter() - t_plan1
+    time.perf_counter() - t_plan1
 
     vid_total = len(vid_targets)
     if vid_total == 0:
@@ -433,7 +467,9 @@ def cleanup_rename_cmd(
     with bar_v:
         task_v = bar_v.add_task("starting…", total=vid_total)
         for src, dst, ok, reason in svc.iter_apply(targets=vid_targets):
-            bar_v.update(task_v, advance=1, description=f"{Path(src).name} -> {Path(dst).name}")
+            bar_v.update(
+                task_v, advance=1, description=f"{Path(src).name} -> {Path(dst).name}"
+            )
             if ok:
                 v_renamed += 1
             else:
@@ -710,7 +746,7 @@ def convert_webp_to_jpeg_cmd(
     svc = ConvertService(
         src_root=src_root,
         dst_root=dst_root,
-        recurse=True,                # webp tool is recursive by design
+        recurse=True,  # webp tool is recursive by design
         quality=quality,
         overwrite=overwrite,
         flatten_alpha=flatten_alpha,
@@ -754,7 +790,9 @@ def convert_webp_to_jpeg_cmd(
     with bar:
         task = bar.add_task("starting…", total=total)
         for src, dst, ok, reason in svc.iter_apply(targets=targets):
-            bar.update(task, advance=1, description=f"{Path(src).name} -> {Path(dst).name}")
+            bar.update(
+                task, advance=1, description=f"{Path(src).name} -> {Path(dst).name}"
+            )
             if ok:
                 converted += 1
             else:

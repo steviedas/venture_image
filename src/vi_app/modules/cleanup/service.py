@@ -44,9 +44,7 @@ class CleanupService:
     }
 
     # NEW: supported video formats
-    VIDEO_EXTS = {
-        ".mp4", ".mov", ".m4v", ".mkv", ".avi", ".wmv", ".3gp", ".webm"
-    }
+    VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".wmv", ".3gp", ".webm"}
 
     _HEIF_REGISTERED = False  # lazy, best-effort
 
@@ -62,6 +60,7 @@ class CleanupService:
             return
         try:
             from pillow_heif import register_heif_opener  # type: ignore
+
             register_heif_opener()
             cls._HEIF_REGISTERED = True
         except Exception:
@@ -219,6 +218,7 @@ class CleanupService:
 # Services
 # ------------------------------------------------------------------------------
 
+
 class RemoveFilesService(CleanupService):
     def run(
         self, patterns: list[str], dry_run: bool, remove_empty_dirs: bool
@@ -362,7 +362,7 @@ class RenameService(CleanupService):
             groups.setdefault(p.suffix.lower(), []).append(p)
 
         pairs: list[tuple[Path, Path]] = []
-        for ext, group in sorted(groups.items()):
+        for _ext, group in sorted(groups.items()):
             items = sorted(
                 ((self._filesystem_earliest_dt(p), p) for p in group),
                 key=lambda t: (t[0], t[1].name.lower()),

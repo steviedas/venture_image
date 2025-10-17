@@ -2,14 +2,14 @@
 from __future__ import annotations
 
 import shutil
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Iterable, List, Tuple
 
 from .schemas import DedupItem, DedupRequest, DedupStrategy
+from .strategies.base import ProgressReporter, get_worker_count
 from .strategies.content import ContentStrategy
 from .strategies.metadata import MetadataStrategy
-from .strategies.base import ProgressReporter, get_worker_count
 
 
 def _select(strategy: DedupStrategy):
@@ -19,13 +19,17 @@ def _select(strategy: DedupStrategy):
     return MetadataStrategy()
 
 
-def plan(req: DedupRequest, reporter: ProgressReporter | None = None) -> list[DedupItem]:
+def plan(
+    req: DedupRequest, reporter: ProgressReporter | None = None
+) -> list[DedupItem]:
     """Compute duplicate clusters using the selected strategy."""
     strat = _select(req.strategy)
     return strat.run(Path(req.root), reporter=reporter)
 
 
-def _next_dupe_path(keeper: Path, dup: Path, target_dir: Path, start_n: int = 1) -> Path:
+def _next_dupe_path(
+    keeper: Path, dup: Path, target_dir: Path, start_n: int = 1
+) -> Path:
     """
     Build a destination path like '<keeper_stem>_dupe(n)<dup_ext>' in target_dir,
     bumping n until the path is free.
@@ -68,7 +72,9 @@ def _bump_until_free(dst: Path) -> Path:
         n += 1
 
 
-def apply(req: DedupRequest, reporter: ProgressReporter | None = None) -> list[DedupItem]:
+def apply(
+    req: DedupRequest, reporter: ProgressReporter | None = None
+) -> list[DedupItem]:
     """
     Move duplicates, renaming them to '<keeper_stem>_dupe(n)<dup_ext>' into the duplicate folder
     (or req.move_duplicates_to when provided). Runs moves in parallel with progress reporting.
@@ -78,7 +84,7 @@ def apply(req: DedupRequest, reporter: ProgressReporter | None = None) -> list[D
         return clusters
 
     # Prepare move tasks: (src, dst)
-    def _moves() -> Iterable[Tuple[Path, Path]]:
+    def _moves() -> Iterable[tuple[Path, Path]]:
         for cluster in clusters:
             keep = Path(cluster.keep).resolve()
             counter = 1  # per-cluster numbering
@@ -101,18 +107,22 @@ def apply(req: DedupRequest, reporter: ProgressReporter | None = None) -> list[D
                 target_dir.mkdir(parents=True, exist_ok=True)
 
                 # Compute first candidate for this duplicate
-                dst = _next_dupe_path(keeper=keep, dup=src, target_dir=target_dir, start_n=counter)
+                dst = _next_dupe_path(
+                    keeper=keep, dup=src, target_dir=target_dir, start_n=counter
+                )
                 counter += 1  # advance nominal per-cluster counter
 
                 yield (src, dst)
 
-    todo: List[Tuple[Path, Path]] = list(_moves())
+    todo: list[tuple[Path, Path]] = list(_moves())
     total = len(todo)
 
     # MOVE (parallel) with reporter
     workers = get_worker_count(io_bound=True)
     if reporter:
-        reporter.start("move", total=total, text=f"Moving duplicates… (workers={workers})")
+        reporter.start(
+            "move", total=total, text=f"Moving duplicates… (workers={workers})"
+        )
 
     def _move_one(src: Path, dst: Path) -> tuple[Path, bool, str | None]:
         # Sentinel skip (src == dst) or non-existent source
@@ -127,7 +137,7 @@ def apply(req: DedupRequest, reporter: ProgressReporter | None = None) -> list[D
             # shutil.move handles cross-filesystem moves
             shutil.move(str(src), str(dst))
             return (src, True, None)
-        except Exception as e:
+        except Exception:
             # One more attempt with a bumped name (handles rare races)
             try:
                 fallback = _bump_until_free(dst)

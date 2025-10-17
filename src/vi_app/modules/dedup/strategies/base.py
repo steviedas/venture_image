@@ -22,23 +22,34 @@ Phase = Literal["scan", "hash", "bucket", "cluster", "select", "move"]
 
 @runtime_checkable
 class ProgressReporter(Protocol):
-    def start(self, phase: Phase, total: int | None = None, text: str | None = None) -> None: ...
-    def update(self, phase: Phase, advance: int = 1, text: str | None = None) -> None: ...
+    def start(
+        self, phase: Phase, total: int | None = None, text: str | None = None
+    ) -> None: ...
+    def update(
+        self, phase: Phase, advance: int = 1, text: str | None = None
+    ) -> None: ...
     def end(self, phase: Phase) -> None: ...
 
 
 class DedupStrategyBase(ABC):
     """Strategy interface for dedup implementations."""
+
     @abstractmethod
-    def run(self, root: Path, reporter: ProgressReporter | None = None) -> list[DedupItem]:
+    def run(
+        self, root: Path, reporter: ProgressReporter | None = None
+    ) -> list[DedupItem]:
         raise NotImplementedError
 
 
 class NoOpReporter:
-    def start(self, phase: Phase, total: int | None = None, text: str | None = None) -> None:  # noqa: D401
+    def start(
+        self, phase: Phase, total: int | None = None, text: str | None = None
+    ) -> None:  # noqa: D401
         pass
+
     def update(self, phase: Phase, advance: int = 1, text: str | None = None) -> None:  # noqa: D401
         pass
+
     def end(self, phase: Phase) -> None:  # noqa: D401
         pass
 

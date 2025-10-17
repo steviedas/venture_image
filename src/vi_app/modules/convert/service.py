@@ -1,4 +1,4 @@
-# src/vi_app/modules/convert_images/service.py
+# src/vi_app/modules/convert/service.py
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator, Sequence

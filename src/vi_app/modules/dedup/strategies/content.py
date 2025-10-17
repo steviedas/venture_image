@@ -1,16 +1,17 @@
 # vi_app/modules/dedup/strategies/content.py
 from __future__ import annotations
 
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 import imagehash
 from PIL import Image
 
 from ..schemas import DedupItem
 from .base import DedupStrategyBase, ProgressReporter, get_worker_count
+
 
 @dataclass(frozen=True)
 class _Item:
@@ -19,12 +20,14 @@ class _Item:
     pixels: int
     size: int
 
+
 class ContentStrategy(DedupStrategyBase):
     """
     Perceptual (near-duplicate) strategy using pHash (configurable).
     Reports progress for: scan -> hash -> cluster -> select.
     Hash phase is parallelised with a thread pool.
     """
+
     def __init__(
         self,
         hash_fn=imagehash.phash,
@@ -36,11 +39,21 @@ class ContentStrategy(DedupStrategyBase):
         self.hash_size = hash_size
         self.hamming_threshold = hamming_threshold
         self.exts = exts or {
-            ".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".bmp", ".heic", ".heif"
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".webp",
+            ".tif",
+            ".tiff",
+            ".bmp",
+            ".heic",
+            ".heif",
         }
 
     # ---- public API ----
-    def run(self, root: Path, reporter: ProgressReporter | None = None) -> list[DedupItem]:
+    def run(
+        self, root: Path, reporter: ProgressReporter | None = None
+    ) -> list[DedupItem]:
         root = root.resolve()
 
         # SCAN
@@ -51,9 +64,13 @@ class ContentStrategy(DedupStrategyBase):
             reporter.end("scan")
 
         # HASH (parallel)
-        workers = get_worker_count(io_bound=True)  # PIL decode + hashing benefit from threads
+        workers = get_worker_count(
+            io_bound=True
+        )  # PIL decode + hashing benefit from threads
         if reporter:
-            reporter.start("hash", total=len(files), text=f"Computing pHash… (workers={workers})")
+            reporter.start(
+                "hash", total=len(files), text=f"Computing pHash… (workers={workers})"
+            )
 
         items: list[_Item] = []
 
@@ -84,7 +101,9 @@ class ContentStrategy(DedupStrategyBase):
         # CLUSTER (greedy, sequential)
         if reporter:
             reporter.start("cluster", total=len(items), text="Clustering near-dupes…")
-        remaining = sorted(items, key=lambda it: (it.pixels, it.size, str(it.path)), reverse=True)
+        remaining = sorted(
+            items, key=lambda it: (it.pixels, it.size, str(it.path)), reverse=True
+        )
         clusters: list[list[_Item]] = []
         while remaining:
             seed = remaining.pop(0)
@@ -120,7 +139,9 @@ class ContentStrategy(DedupStrategyBase):
         return results
 
     # ---- helpers ----
-    def _iter_images(self, root: Path, reporter: ProgressReporter | None = None) -> Iterable[Path]:
+    def _iter_images(
+        self, root: Path, reporter: ProgressReporter | None = None
+    ) -> Iterable[Path]:
         for p in root.rglob("*"):
             if p.is_file() and p.suffix.lower() in self.exts:
                 if reporter:

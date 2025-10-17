@@ -43,7 +43,7 @@ Source = "https://example.com/venture-image"
 # --- Entry-point based module discovery ---
 [project.entry-points."vi_app.modules"]
 cleanup = "vi_app.modules.cleanup.router:router"
-convert_images = "vi_app.modules.convert_images.router:router"
+convert = "vi_app.modules.convert.router:router"
 dedup = "vi_app.modules.dedup.router:router"
 
 [tool.hatch.build.targets.wheel]

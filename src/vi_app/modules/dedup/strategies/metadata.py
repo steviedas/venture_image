@@ -2,15 +2,16 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 from PIL import Image
 
 from ..schemas import DedupItem
 from .base import DedupStrategyBase, ProgressReporter, get_worker_count
+
 
 @dataclass(frozen=True)
 class _Item:
@@ -19,18 +20,30 @@ class _Item:
     pixels: int
     size: int
 
+
 class MetadataStrategy(DedupStrategyBase):
     """
     Exact-byte duplicate detection via SHA-256; ranks keepers by resolution/size/path.
     Reports progress for: scan -> hash -> bucket -> select.
     Hash phase is parallelised with a thread pool.
     """
+
     def __init__(self, exts: set[str] | None = None) -> None:
         self.exts = exts or {
-            ".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".bmp", ".heic", ".heif"
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".webp",
+            ".tif",
+            ".tiff",
+            ".bmp",
+            ".heic",
+            ".heif",
         }
 
-    def run(self, root: Path, reporter: ProgressReporter | None = None) -> list[DedupItem]:
+    def run(
+        self, root: Path, reporter: ProgressReporter | None = None
+    ) -> list[DedupItem]:
         root = root.resolve()
 
         # SCAN
@@ -41,9 +54,15 @@ class MetadataStrategy(DedupStrategyBase):
             reporter.end("scan")
 
         # HASH (parallel sha256)
-        workers = get_worker_count(io_bound=True)  # hashlib (C) + disk IO -> threads scale
+        workers = get_worker_count(
+            io_bound=True
+        )  # hashlib (C) + disk IO -> threads scale
         if reporter:
-            reporter.start("hash", total=len(files), text=f"Hashing files (SHA-256)… (workers={workers})")
+            reporter.start(
+                "hash",
+                total=len(files),
+                text=f"Hashing files (SHA-256)… (workers={workers})",
+            )
 
         items: list[_Item] = []
 
@@ -73,7 +92,9 @@ class MetadataStrategy(DedupStrategyBase):
 
         # BUCKET
         if reporter:
-            reporter.start("bucket", total=len(items), text="Bucketing exact duplicates…")
+            reporter.start(
+                "bucket", total=len(items), text="Bucketing exact duplicates…"
+            )
         buckets: dict[str, list[_Item]] = {}
         for it in items:
             buckets.setdefault(it.sha256, []).append(it)
@@ -100,7 +121,9 @@ class MetadataStrategy(DedupStrategyBase):
         return results
 
     # ---- helpers ----
-    def _iter_images(self, root: Path, reporter: ProgressReporter | None = None) -> Iterable[Path]:
+    def _iter_images(
+        self, root: Path, reporter: ProgressReporter | None = None
+    ) -> Iterable[Path]:
         for p in root.rglob("*"):
             if p.is_file() and p.suffix.lower() in self.exts:
                 if reporter:
