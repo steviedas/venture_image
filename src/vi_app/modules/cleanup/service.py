@@ -43,6 +43,11 @@ class CleanupService:
         ".gif",
     }
 
+    # NEW: supported video formats
+    VIDEO_EXTS = {
+        ".mp4", ".mov", ".m4v", ".mkv", ".avi", ".wmv", ".3gp", ".webm"
+    }
+
     _HEIF_REGISTERED = False  # lazy, best-effort
 
     def __init__(self, root: Path):
@@ -57,7 +62,6 @@ class CleanupService:
             return
         try:
             from pillow_heif import register_heif_opener  # type: ignore
-
             register_heif_opener()
             cls._HEIF_REGISTERED = True
         except Exception:
@@ -104,6 +108,17 @@ class CleanupService:
                 p
                 for p in dir_path.iterdir()
                 if p.is_file() and p.suffix.lower() in cls.IMAGE_EXTS
+            ]
+        )
+
+    # NEW: videos in a directory
+    @classmethod
+    def _iter_videos(cls, dir_path: Path) -> list[Path]:
+        return sorted(
+            [
+                p
+                for p in dir_path.iterdir()
+                if p.is_file() and p.suffix.lower() in cls.VIDEO_EXTS
             ]
         )
 
@@ -203,7 +218,6 @@ class CleanupService:
 # ------------------------------------------------------------------------------
 # Services
 # ------------------------------------------------------------------------------
-
 
 class RemoveFilesService(CleanupService):
     def run(
@@ -334,6 +348,31 @@ class RenameService(CleanupService):
             pairs.append((p, dir_path / new_name))
         return pairs
 
+    # NEW: plan video names per format (per directory)
+    def _sequence_video_names(
+        self, dir_path: Path, files: list[Path], zero_pad: int
+    ) -> list[tuple[Path, Path]]:
+        """
+        Group by file extension and create sequences per format:
+        VID_000001.MP4, VID_000002.MP4, … and separately VID_000001.MOV, …
+        Order within a format is by earliest filesystem datetime, then name.
+        """
+        groups: dict[str, list[Path]] = {}
+        for p in files:
+            groups.setdefault(p.suffix.lower(), []).append(p)
+
+        pairs: list[tuple[Path, Path]] = []
+        for ext, group in sorted(groups.items()):
+            items = sorted(
+                ((self._filesystem_earliest_dt(p), p) for p in group),
+                key=lambda t: (t[0], t[1].name.lower()),
+            )
+            for idx, (_, p) in enumerate(items, start=1):
+                seq = f"{idx:0{zero_pad}d}"
+                new_name = f"VID_{seq}{p.suffix.upper()}"
+                pairs.append((p, dir_path / new_name))
+        return pairs
+
     def plan(
         self, on_discover: Callable[[int], None] | None = None
     ) -> list[RenamedItem]:
@@ -356,6 +395,25 @@ class RenameService(CleanupService):
         self, on_discover: Callable[[int], None] | None = None
     ) -> list[tuple[Path, Path]]:
         items = self.plan(on_discover=on_discover)
+        return [(Path(it.src), Path(it.dst)) for it in items]
+
+    # NEW: enumerate video targets with a caller-provided zero-pad
+    def enumerate_video_targets(
+        self, zero_pad: int, on_discover: Callable[[int], None] | None = None
+    ) -> list[tuple[Path, Path]]:
+        items: list[RenamedItem] = []
+        discovered = 0
+        for d in self._walk_dirs(self.root, self.recurse):
+            files = self._iter_videos(d)
+            if not files:
+                continue
+            discovered += len(files)
+            if on_discover:
+                on_discover(discovered)
+            for src, dst in self._sequence_video_names(d, files, zero_pad):
+                if src.name == dst.name:
+                    continue
+                items.append(RenamedItem(src=str(src), dst=str(dst)))
         return [(Path(it.src), Path(it.dst)) for it in items]
 
     # ---- apply (two-phase) ------------------------------------------------------

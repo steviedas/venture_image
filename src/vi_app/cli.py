@@ -295,7 +295,8 @@ def cleanup_find_marked_dupes_cmd(
 
 
 @cleanup_app.command(
-    "rename", help="Per directory, rename images to IMG_XXXXXX ordered by date taken."
+    "rename",
+    help="Per directory, rename images to IMG_XXXXXX then videos to VID_XXXXXX (uses the same digit width).",
 )
 def cleanup_rename_cmd(
     # Make args optional so we can prompt when missing
@@ -306,7 +307,8 @@ def cleanup_rename_cmd(
         None, "--recurse/--no-recurse", help="Process subdirectories."
     ),
     zero_pad: int | None = typer.Option(
-        None, "--zero-pad", "-z", min=3, max=10, help="Digits in sequence."
+        None, "--zero-pad", "-z", min=3, max=10,
+        help="Digits in sequence for BOTH images and videos."
     ),
     apply: bool = typer.Option(False, "--apply", help="Perform renames."),
     plan: bool = typer.Option(False, "--plan", help="Alias for dry-run (default)."),
@@ -320,8 +322,9 @@ def cleanup_rename_cmd(
     if recurse is None:
         recurse = typer.confirm("Process subdirectories?", default=True)
 
+    # Single prompt for both images and videos
     if zero_pad is None:
-        zero_pad = typer.prompt("Digits in sequence (3-10)", default=6, type=int)
+        zero_pad = typer.prompt("Digits in sequence (3-10) for BOTH images and videos", default=6, type=int)
         if not (3 <= zero_pad <= 10):
             raise typer.BadParameter("zero-pad must be between 3 and 10")
 
@@ -333,47 +336,90 @@ def cleanup_rename_cmd(
         apply = mode == "apply"
 
     dry_run = _resolve_dry_run(apply, plan)
-    req = RenameBySequenceRequest(
-        root=root, recurse=recurse, zero_pad=zero_pad, dry_run=dry_run
-    )
-
-    t_total0 = time.perf_counter()
     console = Console()
 
-    # ---------- Plan once (time it) ----------
+    # =======================
+    # PHASE 1: IMAGES (IMG_)
+    # =======================
+    t_total0 = time.perf_counter()
+
+    # Plan images
     t_plan0 = time.perf_counter()
     svc = RenameService(root=root, recurse=recurse, zero_pad=zero_pad)
-
-    with console.status("Planning renames… found 0 files") as status:
-
+    with console.status("Planning image renames… found 0 files") as status:
         def _on_discover(n: int) -> None:
-            status.update(status=f"Planning renames… found {n} files")
+            status.update(status=f"Planning image renames… found {n} files")
+        img_targets = svc.enumerate_targets(on_discover=_on_discover)
+    img_plan_elapsed = time.perf_counter() - t_plan0
 
-        targets = svc.enumerate_targets(on_discover=_on_discover)
-
-    plan_elapsed = time.perf_counter() - t_plan0
-
-    total = len(targets)
-    if total == 0:
-        typer.echo("No images to rename.")
-        return
-
-    # ---------- PLAN MODE: print full plan, include mapping time ----------
-    if req.dry_run:
-        typer.echo(f"Plan: {total} file(s) will be renamed")
-        for src, dst in targets:
+    img_total = len(img_targets)
+    if img_total == 0:
+        console.print("No images to rename.", style="dim")
+    elif dry_run:
+        typer.echo(f"[PLAN] images: {img_total} file(s) will be renamed")
+        for src, dst in img_targets:
             typer.echo(f"{src} -> {dst}")
-        elapsed_total = time.perf_counter() - t_total0
-        rate = total / elapsed_total if elapsed_total > 0 else 0.0
-        typer.echo(f"Computed mapping in {plan_elapsed:.2f}s.")
-        typer.echo(
-            f"Would rename {total} file(s) in {elapsed_total:.2f}s (~{rate:.1f} files/s)."
+    else:
+        # APPLY with separate progress bar (images)
+        bar = Progress(
+            TextColumn("[bold]Renaming images[/]"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TextColumn("•"),
+            TimeRemainingColumn(),
+            TextColumn("• {task.description}"),
+            console=console,
         )
+        renamed = 0
+        skipped = 0
+        failures: list[tuple[Path, Path, str]] = []
+        with bar:
+            task = bar.add_task("starting…", total=img_total)
+            for src, dst, ok, reason in svc.iter_apply(targets=img_targets):
+                bar.update(task, advance=1, description=f"{Path(src).name} -> {Path(dst).name}")
+                if ok:
+                    renamed += 1
+                else:
+                    skipped += 1
+                    failures.append((Path(src), Path(dst), reason or "unknown"))
+        console.print(f"Computed image mapping in {img_plan_elapsed:.2f}s.", style="dim")
+        if failures:
+            console.print("[bold yellow]Skipped/failed image renames:[/bold yellow]")
+            for src, dst, reason in failures:
+                console.print(f"{src} -> {dst}  [yellow]SKIP[/yellow] ({reason})")
+        img_elapsed_total = time.perf_counter() - t_total0
+        img_rate = img_total / img_elapsed_total if img_elapsed_total > 0 else 0.0
+        img_summary_style = "bold green" if skipped == 0 else "bold yellow"
+        console.print(
+            f"Images: renamed {renamed}, skipped {skipped} of {img_total} in {img_elapsed_total:.2f}s (~{img_rate:.1f} files/s).",
+            style=img_summary_style,
+        )
+
+    # =======================
+    # PHASE 2: VIDEOS (VID_)
+    # =======================
+    # Use the SAME zero_pad value
+    t_plan1 = time.perf_counter()
+    vid_targets = svc.enumerate_video_targets(
+        zero_pad=zero_pad,
+        on_discover=lambda n: None,
+    )
+    vid_plan_elapsed = time.perf_counter() - t_plan1
+
+    vid_total = len(vid_targets)
+    if vid_total == 0:
+        console.print("No videos to rename.", style="dim")
         return
 
-    # ---------- APPLY MODE: progress bar; only print failures ----------
-    bar = Progress(
-        TextColumn("[bold]Renaming[/]"),
+    if dry_run:
+        typer.echo(f"[PLAN] videos: {vid_total} file(s) will be renamed")
+        for src, dst in vid_targets:
+            typer.echo(f"{src} -> {dst}")
+        return
+
+    # APPLY with a separate progress bar (videos)
+    bar_v = Progress(
+        TextColumn("[bold]Renaming videos[/]"),
         BarColumn(),
         TaskProgressColumn(),
         TextColumn("•"),
@@ -381,38 +427,30 @@ def cleanup_rename_cmd(
         TextColumn("• {task.description}"),
         console=console,
     )
-
-    renamed = 0
-    skipped = 0
-    failures: list[tuple[Path, Path, str]] = []  # (src, dst, reason)
-
-    with bar:
-        task = bar.add_task("starting…", total=total)
-        for src, dst, ok, reason in svc.iter_apply(targets=targets):
-            bar.update(
-                task, advance=1, description=f"{Path(src).name} -> {Path(dst).name}"
-            )
+    v_renamed = 0
+    v_skipped = 0
+    v_failures: list[tuple[Path, Path, str]] = []
+    with bar_v:
+        task_v = bar_v.add_task("starting…", total=vid_total)
+        for src, dst, ok, reason in svc.iter_apply(targets=vid_targets):
+            bar_v.update(task_v, advance=1, description=f"{Path(src).name} -> {Path(dst).name}")
             if ok:
-                renamed += 1
+                v_renamed += 1
             else:
-                skipped += 1
-                failures.append((Path(src), Path(dst), reason or "unknown"))
+                v_skipped += 1
+                v_failures.append((Path(src), Path(dst), reason or "unknown"))
 
-    # ⬇️ this line will appear immediately after the progress bar
-    console.print(f"Computed mapping in {plan_elapsed:.2f}s.", style="dim")
-
-    # (optional) list only failures
-    if failures:
-        console.print("[bold yellow]Skipped/failed renames:[/bold yellow]")
-        for src, dst, reason in failures:
+    if v_failures:
+        console.print("[bold yellow]Skipped/failed video renames:[/bold yellow]")
+        for src, dst, reason in v_failures:
             console.print(f"{src} -> {dst}  [yellow]SKIP[/yellow] ({reason})")
 
-    elapsed_total = time.perf_counter() - t_total0
-    rate = total / elapsed_total if elapsed_total > 0 else 0.0
-    summary_style = "bold green" if skipped == 0 else "bold yellow"
+    vid_elapsed_total = time.perf_counter() - t_plan1
+    vid_rate = vid_total / vid_elapsed_total if vid_elapsed_total > 0 else 0.0
+    v_summary_style = "bold green" if v_skipped == 0 else "bold yellow"
     console.print(
-        f"Renamed {renamed} file(s), skipped {skipped} out of {total} in {elapsed_total:.2f}s (~{rate:.1f} files/s).",
-        style=summary_style,
+        f"Videos: renamed {v_renamed}, skipped {v_skipped} of {vid_total} in {vid_elapsed_total:.2f}s (~{vid_rate:.1f} files/s).",
+        style=v_summary_style,
     )
 
 
