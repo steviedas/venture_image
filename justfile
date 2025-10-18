@@ -76,8 +76,8 @@ cli-cleanup-sort src="" dst="" strategy="by_date" option="plan":
 # CONVERT
 # -------------
 
-cli-convert-folder-to-jpeg:
+convert-folder-to-jpeg:
     uv run vi convert folder-to-jpeg
 
-cli-convert-webp-to-jpeg:
+convert-webp-to-jpeg:
     uv run vi convert webp-to-jpeg
