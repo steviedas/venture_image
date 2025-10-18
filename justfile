@@ -45,7 +45,7 @@ cli:
 # DEDUP
 # -------------
 
-cli-dedup:
+dedup:
     uv run vi dedup
 
 # -------------

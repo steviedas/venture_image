@@ -2,8 +2,7 @@
 from fastapi import APIRouter
 
 from vi_app.core.errors import to_http
-
-from . import service
+from .service import DedupService
 from .schemas import DedupRequest, DedupResponse
 
 router = APIRouter(prefix="/dedup", tags=["dedup"])
@@ -23,8 +22,9 @@ router = APIRouter(prefix="/dedup", tags=["dedup"])
     ),
 )
 def dedup(req: DedupRequest) -> DedupResponse:
+    svc = DedupService()
     try:
-        clusters = service.plan(req) if req.dry_run else service.apply(req)
+        clusters = svc.plan(req) if req.dry_run else svc.apply(req)
         dup_count = sum(len(c.duplicates) for c in clusters)
         return DedupResponse(
             dry_run=req.dry_run,

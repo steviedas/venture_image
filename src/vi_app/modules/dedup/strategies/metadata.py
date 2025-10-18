@@ -1,16 +1,17 @@
-# vi_app/modules/dedup/strategies/metadata.py
+# src/vi_app/modules/dedup/strategies/metadata.py
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
 from PIL import Image
 
+from vi_app.core.progress import ProgressReporter
 from ..schemas import DedupItem
-from .base import DedupStrategyBase, ProgressReporter, get_worker_count
+from .base import get_worker_count
+from .image_base import ImageStrategyBase
 
 
 @dataclass(frozen=True)
@@ -21,7 +22,7 @@ class _Item:
     size: int
 
 
-class MetadataStrategy(DedupStrategyBase):
+class MetadataStrategy(ImageStrategyBase):
     """
     Exact-byte duplicate detection via SHA-256; ranks keepers by resolution/size/path.
     Reports progress for: scan -> hash -> bucket -> select.
@@ -29,21 +30,9 @@ class MetadataStrategy(DedupStrategyBase):
     """
 
     def __init__(self, exts: set[str] | None = None) -> None:
-        self.exts = exts or {
-            ".jpg",
-            ".jpeg",
-            ".png",
-            ".webp",
-            ".tif",
-            ".tiff",
-            ".bmp",
-            ".heic",
-            ".heif",
-        }
+        super().__init__(exts)
 
-    def run(
-        self, root: Path, reporter: ProgressReporter | None = None
-    ) -> list[DedupItem]:
+    def run(self, root: Path, reporter: ProgressReporter | None = None) -> list[DedupItem]:
         root = root.resolve()
 
         # SCAN
@@ -54,15 +43,9 @@ class MetadataStrategy(DedupStrategyBase):
             reporter.end("scan")
 
         # HASH (parallel sha256)
-        workers = get_worker_count(
-            io_bound=True
-        )  # hashlib (C) + disk IO -> threads scale
+        workers = get_worker_count(io_bound=True)  # hashlib (C) + disk IO -> threads scale
         if reporter:
-            reporter.start(
-                "hash",
-                total=len(files),
-                text=f"Hashing files (SHA-256)… (workers={workers})",
-            )
+            reporter.start("hash", total=len(files), text=f"Hashing files (SHA-256)… (workers={workers})")
 
         items: list[_Item] = []
 
@@ -92,9 +75,7 @@ class MetadataStrategy(DedupStrategyBase):
 
         # BUCKET
         if reporter:
-            reporter.start(
-                "bucket", total=len(items), text="Bucketing exact duplicates…"
-            )
+            reporter.start("bucket", total=len(items), text="Bucketing exact duplicates…")
         buckets: dict[str, list[_Item]] = {}
         for it in items:
             buckets.setdefault(it.sha256, []).append(it)
@@ -121,15 +102,6 @@ class MetadataStrategy(DedupStrategyBase):
         return results
 
     # ---- helpers ----
-    def _iter_images(
-        self, root: Path, reporter: ProgressReporter | None = None
-    ) -> Iterable[Path]:
-        for p in root.rglob("*"):
-            if p.is_file() and p.suffix.lower() in self.exts:
-                if reporter:
-                    reporter.update("scan", 1, text=p.name)
-                yield p
-
     @staticmethod
     def _sha256_file(p: Path, chunk: int = 1024 * 1024) -> str:
         h = hashlib.sha256()
