@@ -16,6 +16,8 @@ from rich.progress import (
 from rich.table import Table
 
 # --- Cleanup module ---
+from vi_app.commands.common import resolve_dry_run
+from vi_app.commands.dedup import app as dedup_app
 from vi_app.modules.cleanup.schemas import (
     FindMarkedDupesRequest,
     RemoveFilesRequest,
@@ -35,211 +37,16 @@ from vi_app.modules.cleanup.service import (
 from vi_app.modules.convert.service import ConvertService
 
 # --- Dedup module ---
-from vi_app.modules.dedup.schemas import DedupRequest, DedupStrategy
-from vi_app.modules.dedup.service import apply as dedup_apply
-from vi_app.modules.dedup.service import plan as dedup_plan
 
 app = typer.Typer(help="Venture Image CLI")
 
 cleanup_app = typer.Typer(help="Cleanup endpoints")
 convert_app = typer.Typer(help="Convert endpoints")
-dedup_app = typer.Typer(help="Dedup endpoints")
+
 
 app.add_typer(cleanup_app, name="cleanup")
 app.add_typer(convert_app, name="convert")
 app.add_typer(dedup_app, name="dedup")
-
-
-def _resolve_dry_run(apply: bool, plan: bool) -> bool:
-    """
-    Standardize dry-run across commands.
-    - default: dry-run (plan)
-    - --apply => not dry-run
-    - --plan  => force dry-run
-    - both    => error
-    """
-    if apply and plan:
-        raise typer.BadParameter("Use either --apply or --plan, not both.")
-    # dry-run if not applying OR explicitly planning
-    return (not apply) or plan
-
-
-# =========================
-# group: DEDUP (mirrors /dedup)
-# =========================
-
-
-class _RichReporter:
-    """Bridge the service's ProgressReporter interface to a Rich Progress instance."""
-
-    def __init__(self, progress: Progress) -> None:
-        self.progress = progress
-        self.tasks: dict[str, int] = {}
-        self.labels = {
-            "scan": "Scanning",
-            "hash": "Hashing",
-            "bucket": "Bucketing",
-            "cluster": "Clustering",
-            "select": "Selecting",
-            "move": "Moving",
-        }
-
-    def start(
-        self, phase: str, total: int | None = None, text: str | None = None
-    ) -> None:
-        label = self.labels.get(phase, phase.title())
-        desc = f"{label}"
-        # Add a custom field 'detail' so we can render it after TimeRemainingColumn
-        task_id = self.progress.add_task(desc, total=total, detail=(text or ""))
-        self.tasks[phase] = task_id
-
-    def update(self, phase: str, advance: int = 1, text: str | None = None) -> None:
-        task_id = self.tasks.get(phase)
-        if task_id is None:
-            return
-        if text is not None:
-            # Update the custom field; columns will render it after time remaining
-            self.progress.update(task_id, advance=advance, detail=text)
-        else:
-            self.progress.update(task_id, advance=advance)
-
-    def end(self, phase: str) -> None:
-        task_id = self.tasks.get(phase)
-        if task_id is None:
-            return
-        task = self.progress.tasks[task_id]
-        if task.total is not None:
-            self.progress.update(task_id, completed=task.total, detail="")
-        else:
-            self.progress.update(task_id, visible=False, detail="")
-
-
-def _dedup_run_interactive(
-    root: Path | None = None,
-    strategy: DedupStrategy | None = None,
-    move_to: Path | None = None,
-    apply: bool = False,
-    plan: bool = False,
-    show_table: bool = False,  # NEW: default off
-):
-    # ---------- Interactive prompts ----------
-    if root is None:
-        root = Path(typer.prompt("root (folder to scan)")).expanduser()
-    if not root.exists() or not root.is_dir():
-        raise typer.BadParameter(f"root does not exist or is not a directory: {root}")
-
-    if strategy is None:
-        choice = (
-            typer.prompt("strategy (content/metadata)", default="content")
-            .strip()
-            .lower()
-        )
-        if choice not in {"content", "metadata"}:
-            raise typer.BadParameter("strategy must be 'content' or 'metadata'")
-        strategy = DedupStrategy(choice)
-
-    if not apply and not plan:
-        mode = typer.prompt("option (plan/apply)", default="plan").strip().lower()
-        if mode not in {"plan", "apply"}:
-            raise typer.BadParameter("option must be 'plan' or 'apply'")
-        plan = mode == "plan"
-        apply = mode == "apply"
-
-    dry_run = _resolve_dry_run(apply, plan)
-
-    if apply and move_to is None:
-        mv = typer.prompt(
-            "move-to (destination for duplicates; Enter = sibling 'duplicate/' folder)",
-            default="",
-        ).strip()
-        move_to = Path(mv).expanduser() if mv else None
-
-    # ---------- Execute with progress ----------
-    req = DedupRequest(
-        root=root,
-        strategy=strategy,
-        move_duplicates_to=str(move_to) if move_to else None,
-        dry_run=dry_run,
-    )
-
-    console = Console()
-    progress = Progress(
-        TextColumn("[bold]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        TextColumn("•"),
-        TimeRemainingColumn(),
-        TextColumn("• {task.fields[detail]}"),  # <- filename shown here
-        console=console,
-    )
-
-    reporter = _RichReporter(progress)
-
-    t0 = time.perf_counter()
-    with progress:
-        clusters = (
-            dedup_plan(req, reporter=reporter)
-            if req.dry_run
-            else dedup_apply(req, reporter=reporter)
-        )
-    elapsed = time.perf_counter() - t0
-
-    total_dups = sum(len(c.duplicates) for c in clusters)
-    action = "PLAN" if req.dry_run else "APPLY"
-    console.print(
-        f"[{action}] strategy={strategy} clusters={len(clusters)} duplicates={total_dups} in {elapsed:.2f}s"
-    )
-
-    if show_table:
-        table = Table(title="Duplicate Clusters", show_lines=False)
-        table.add_column("Keep", overflow="fold")
-        table.add_column("# Duplicates", justify="right")
-        table.add_column("Duplicates", overflow="fold")
-        for c in clusters:
-            table.add_row(
-                c.keep,
-                str(len(c.duplicates)),
-                "\n".join(c.duplicates) if c.duplicates else "—",
-            )
-        console.print(table)
-
-
-@dedup_app.command(
-    "run",
-    help="Detect duplicates (dry-run by default) or move them with --apply / plan with --plan.",
-)
-def dedup_run(
-    root: Path | None = typer.Argument(
-        None, exists=False, file_okay=False, dir_okay=True
-    ),
-    strategy: DedupStrategy | None = typer.Option(
-        None, "--strategy", "-s", help="content|metadata"
-    ),
-    move_to: Path | None = typer.Option(
-        None, "--move-to", "-m", help="Where to move duplicates when applying."
-    ),
-    apply: bool = typer.Option(False, "--apply", help="Perform moves."),
-    plan: bool = typer.Option(False, "--plan", help="Alias for dry-run (default)."),
-    show_table: bool = typer.Option(
-        False,
-        "--show-table/--no-show-table",
-        help="Print the duplicate clusters table.",
-    ),
-):
-    return _dedup_run_interactive(
-        root=root,
-        strategy=strategy,
-        move_to=move_to,
-        apply=apply,
-        plan=plan,
-        show_table=show_table,  # pass through
-    )
-
-
-@dedup_app.callback(invoke_without_command=True)
-def _dedup_default(ctx: typer.Context):
-    if ctx.invoked_subcommand is None:
-        return _dedup_run_interactive()
 
 
 # =========================
@@ -261,7 +68,7 @@ def cleanup_remove_files_cmd(
     apply: bool = typer.Option(False, "--apply", help="Delete files."),
     plan: bool = typer.Option(False, "--plan", help="Alias for dry-run (default)."),
 ):
-    dry_run = _resolve_dry_run(apply, plan)
+    dry_run = resolve_dry_run(apply, plan)
     req = RemoveFilesRequest(
         root=root, patterns=pattern, dry_run=dry_run, remove_empty_dirs=prune_empty
     )
@@ -284,12 +91,12 @@ def cleanup_remove_folders_cmd(
     apply: bool = typer.Option(False, "--apply", help="Remove directories."),
     plan: bool = typer.Option(False, "--plan", help="Alias for dry-run (default)."),
 ):
-    dry_run = _resolve_dry_run(apply, plan)
+    dry_run = resolve_dry_run(apply, plan)
     req = RemoveFoldersRequest(root=root, folder_names=name, dry_run=dry_run)
     svc = RemoveFoldersService(Path(req.root))
     removed = svc.run(req.folder_names, req.dry_run)
     verb = "Would remove" if req.dry_run else "Removed"
-    typer.echo(f"{verb} {len(removed)} directorie(s)")
+    typer.echo(f"{verb} {len(removed)} directories")
     for p in removed:
         typer.echo(str(p))
 
@@ -363,7 +170,7 @@ def cleanup_rename_cmd(
         plan = mode == "plan"
         apply = mode == "apply"
 
-    dry_run = _resolve_dry_run(apply, plan)
+    dry_run = resolve_dry_run(apply, plan)
     console = Console()
 
     # =======================
@@ -505,7 +312,7 @@ def cleanup_sort_cmd(
     apply: bool = typer.Option(False, "--apply", help="Perform moves."),
     plan: bool = typer.Option(False, "--plan", help="Alias for dry-run (default)."),
 ):
-    dry_run = _resolve_dry_run(apply, plan)
+    dry_run = resolve_dry_run(apply, plan)
     req = SortRequest(
         src_root=src_root, dst_root=dst_root, strategy=strategy, dry_run=dry_run
     )
@@ -592,7 +399,7 @@ def convert_folder_to_jpeg_cmd(
         plan = mode == "plan"
         apply = mode == "apply"
 
-    dry_run = _resolve_dry_run(apply, plan)
+    dry_run = resolve_dry_run(apply, plan)
 
     # inside convert_folder_to_jpeg_cmd after computing dry_run
     t0 = time.perf_counter()
@@ -639,10 +446,6 @@ def convert_folder_to_jpeg_cmd(
 
     with bar:
         task = bar.add_task("starting…", total=total)
-
-        def _tick(_n: int) -> None:
-            # update each time a file finishes (handled inline below)
-            pass
 
         for src, dst, ok, reason in svc.iter_apply(targets=targets, on_progress=None):
             bar.update(
@@ -737,7 +540,7 @@ def convert_webp_to_jpeg_cmd(
         plan = mode == "plan"
         apply = mode == "apply"
 
-    dry_run = _resolve_dry_run(apply, plan)
+    dry_run = resolve_dry_run(apply, plan)
 
     # -------- time the whole operation --------
     t0 = time.perf_counter()
