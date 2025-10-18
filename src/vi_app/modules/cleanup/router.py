@@ -8,20 +8,16 @@ from fastapi import APIRouter
 from vi_app.core.errors import to_http
 
 from .schemas import (
-    FindMarkedDupesRequest,
-    FindMarkedDupesResponse,
     MoveItem,
     RemoveFilesRequest,
     RemoveFilesResponse,
     RemoveFoldersRequest,
     RemoveFoldersResponse,
-    # existing models...
     RenameBySequenceRequest,
     RenameBySequenceResponse,
     SortRequest,
 )
 from .service import (
-    FindMarkedDupesService,
     RemoveFilesService,
     RemoveFoldersService,
     RenameService,
@@ -61,21 +57,6 @@ def remove_folders_endpoint(req: RemoveFoldersRequest):
         return RemoveFoldersResponse(
             count=len(removed), paths=removed, dry_run=req.dry_run
         )
-    except Exception as err:
-        raise to_http(err) from err
-
-
-@router.post(
-    "/find-marked-dupes",
-    response_model=FindMarkedDupesResponse,
-    summary="Find files that look like duplicates by name pattern",
-    description="Search for common duplicate markers (e.g. 'copy', '(1)') via regex/substring.",
-)
-def find_marked_dupes_endpoint(req: FindMarkedDupesRequest):
-    try:
-        svc = FindMarkedDupesService(Path(req.root))
-        items = svc.run(req.suffix_pattern)
-        return FindMarkedDupesResponse(count=len(items), paths=items)
     except Exception as err:
         raise to_http(err) from err
 

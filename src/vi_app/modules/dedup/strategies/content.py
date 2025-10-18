@@ -9,6 +9,7 @@ import imagehash
 from PIL import Image
 
 from vi_app.core.progress import ProgressReporter
+
 from ..schemas import DedupItem
 from .base import get_worker_count
 from .image_base import ImageStrategyBase
@@ -42,7 +43,9 @@ class ContentStrategy(ImageStrategyBase):
         self.hamming_threshold = hamming_threshold
 
     # ---- public API ----
-    def run(self, root: Path, reporter: ProgressReporter | None = None) -> list[DedupItem]:
+    def run(
+        self, root: Path, reporter: ProgressReporter | None = None
+    ) -> list[DedupItem]:
         root = root.resolve()
 
         # SCAN
@@ -53,9 +56,13 @@ class ContentStrategy(ImageStrategyBase):
             reporter.end("scan")
 
         # HASH (parallel)
-        workers = get_worker_count(io_bound=True)  # PIL decode + hashing benefit from threads
+        workers = get_worker_count(
+            io_bound=True
+        )  # PIL decode + hashing benefit from threads
         if reporter:
-            reporter.start("hash", total=len(files), text=f"Computing pHash… (workers={workers})")
+            reporter.start(
+                "hash", total=len(files), text=f"Computing pHash… (workers={workers})"
+            )
 
         items: list[_Item] = []
 
@@ -86,7 +93,9 @@ class ContentStrategy(ImageStrategyBase):
         # CLUSTER (greedy, sequential)
         if reporter:
             reporter.start("cluster", total=len(items), text="Clustering near-dupes…")
-        remaining = sorted(items, key=lambda it: (it.pixels, it.size, str(it.path)), reverse=True)
+        remaining = sorted(
+            items, key=lambda it: (it.pixels, it.size, str(it.path)), reverse=True
+        )
         clusters: list[list[_Item]] = []
         while remaining:
             seed = remaining.pop(0)

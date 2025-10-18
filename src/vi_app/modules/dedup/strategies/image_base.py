@@ -5,6 +5,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from vi_app.core.progress import ProgressReporter
+
 from .base import DedupStrategyBase
 
 
@@ -24,7 +25,9 @@ class ImageStrategyBase(DedupStrategyBase):
             ".heif",
         }
 
-    def _iter_images(self, root: Path, reporter: ProgressReporter | None = None) -> Iterable[Path]:
+    def _iter_images(
+        self, root: Path, reporter: ProgressReporter | None = None
+    ) -> Iterable[Path]:
         for p in root.rglob("*"):
             if p.is_file() and p.suffix.lower() in self.exts:
                 if reporter:

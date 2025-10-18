@@ -2,8 +2,9 @@
 from fastapi import APIRouter
 
 from vi_app.core.errors import to_http
-from .service import DedupService
+
 from .schemas import DedupRequest, DedupResponse
+from .service import DedupService
 
 router = APIRouter(prefix="/dedup", tags=["dedup"])
 

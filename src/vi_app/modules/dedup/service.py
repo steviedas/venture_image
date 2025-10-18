@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from vi_app.core.progress import ProgressReporter
+
 from .schemas import DedupItem, DedupRequest, DedupStrategy
 from .strategies.base import get_worker_count
 from .strategies.content import ContentStrategy
@@ -23,12 +24,16 @@ class DedupService:
         return MetadataStrategy()
 
     # ---- public API ----------------------------------------------------------
-    def plan(self, req: DedupRequest, reporter: ProgressReporter | None = None) -> list[DedupItem]:
+    def plan(
+        self, req: DedupRequest, reporter: ProgressReporter | None = None
+    ) -> list[DedupItem]:
         """Compute duplicate clusters using the selected strategy."""
         strat = self._select(req.strategy)
         return strat.run(Path(req.root), reporter=reporter)
 
-    def apply(self, req: DedupRequest, reporter: ProgressReporter | None = None) -> list[DedupItem]:
+    def apply(
+        self, req: DedupRequest, reporter: ProgressReporter | None = None
+    ) -> list[DedupItem]:
         """
         Move duplicates, renaming them to '<keeper_stem>_dupe(n)<dup_ext>' into the duplicate folder
         (or req.move_duplicates_to when provided). Runs moves in parallel with progress reporting.
@@ -55,11 +60,15 @@ class DedupService:
                         pass
 
                     # Choose target dir: explicit param or sibling 'duplicate'
-                    target_dir = Path(req.move_duplicates_to or (src.parent / "duplicate"))
+                    target_dir = Path(
+                        req.move_duplicates_to or (src.parent / "duplicate")
+                    )
                     target_dir.mkdir(parents=True, exist_ok=True)
 
                     # Compute first candidate for this duplicate
-                    dst = self._next_dupe_path(keeper=keep, dup=src, target_dir=target_dir, start_n=counter)
+                    dst = self._next_dupe_path(
+                        keeper=keep, dup=src, target_dir=target_dir, start_n=counter
+                    )
                     counter += 1  # advance nominal per-cluster counter
 
                     yield (src, dst)
@@ -70,7 +79,9 @@ class DedupService:
         # MOVE (parallel) with reporter
         workers = get_worker_count(io_bound=True)
         if reporter:
-            reporter.start("move", total=total, text=f"Moving duplicates… (workers={workers})")
+            reporter.start(
+                "move", total=total, text=f"Moving duplicates… (workers={workers})"
+            )
 
         def _move_one(src: Path, dst: Path) -> tuple[Path, bool, str | None]:
             # Sentinel skip (src == dst) or non-existent source
@@ -111,7 +122,9 @@ class DedupService:
 
     # ---- helpers -------------------------------------------------------------
     @staticmethod
-    def _next_dupe_path(keeper: Path, dup: Path, target_dir: Path, start_n: int = 1) -> Path:
+    def _next_dupe_path(
+        keeper: Path, dup: Path, target_dir: Path, start_n: int = 1
+    ) -> Path:
         """
         Build a destination path like '<keeper_stem>_dupe(n)<dup_ext>' in target_dir,
         bumping n until the path is free.

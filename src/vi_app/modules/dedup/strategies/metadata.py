@@ -9,6 +9,7 @@ from pathlib import Path
 from PIL import Image
 
 from vi_app.core.progress import ProgressReporter
+
 from ..schemas import DedupItem
 from .base import get_worker_count
 from .image_base import ImageStrategyBase
@@ -32,7 +33,9 @@ class MetadataStrategy(ImageStrategyBase):
     def __init__(self, exts: set[str] | None = None) -> None:
         super().__init__(exts)
 
-    def run(self, root: Path, reporter: ProgressReporter | None = None) -> list[DedupItem]:
+    def run(
+        self, root: Path, reporter: ProgressReporter | None = None
+    ) -> list[DedupItem]:
         root = root.resolve()
 
         # SCAN
@@ -43,9 +46,15 @@ class MetadataStrategy(ImageStrategyBase):
             reporter.end("scan")
 
         # HASH (parallel sha256)
-        workers = get_worker_count(io_bound=True)  # hashlib (C) + disk IO -> threads scale
+        workers = get_worker_count(
+            io_bound=True
+        )  # hashlib (C) + disk IO -> threads scale
         if reporter:
-            reporter.start("hash", total=len(files), text=f"Hashing files (SHA-256)… (workers={workers})")
+            reporter.start(
+                "hash",
+                total=len(files),
+                text=f"Hashing files (SHA-256)… (workers={workers})",
+            )
 
         items: list[_Item] = []
 
@@ -75,7 +84,9 @@ class MetadataStrategy(ImageStrategyBase):
 
         # BUCKET
         if reporter:
-            reporter.start("bucket", total=len(items), text="Bucketing exact duplicates…")
+            reporter.start(
+                "bucket", total=len(items), text="Bucketing exact duplicates…"
+            )
         buckets: dict[str, list[_Item]] = {}
         for it in items:
             buckets.setdefault(it.sha256, []).append(it)

@@ -15,6 +15,7 @@ from PIL import Image
 
 from vi_app.core.errors import BadRequest
 from vi_app.core.paths import ensure_within_root
+from vi_app.core.progress import ProgressReporter
 
 from .schemas import (
     MoveItem,
@@ -23,8 +24,9 @@ from .schemas import (
     SortRequest,
     SortStrategy,
 )
-from .strategies import by_date as sort_by_date
-from .strategies import by_location as sort_by_location
+from .strategies.base import SortStrategyBase
+from .strategies.by_date import SortByDateStrategy
+from .strategies.by_location import SortByLocationStrategy
 
 
 class CleanupService:
@@ -280,39 +282,41 @@ class RemoveFoldersService(CleanupService):
         return targets
 
 
-class FindMarkedDupesService(CleanupService):
-    def run(self, suffix_regex: str) -> list[Path]:
-        rx = re.compile(suffix_regex, re.IGNORECASE)
-        return [p for p in self._iter_files() if rx.search(p.name)]
-
-
 class SortService(CleanupService):
     """Delegates to sort strategies, then applies safe moves."""
 
     @staticmethod
-    def _select_plan(strategy: SortStrategy):
+    def _select(strategy: SortStrategy) -> SortStrategyBase:
         return (
-            sort_by_location.plan
+            SortByLocationStrategy()
             if strategy == SortStrategy.by_location
-            else sort_by_date.plan
+            else SortByDateStrategy()
         )
 
-    def plan(self, req: SortRequest) -> list[MoveItem]:
-        plan_fn = self._select_plan(req.strategy)
-        moves = plan_fn(self.root, Path(req.dst_root) if req.dst_root else None)
-        return [MoveItem(src=str(s), dst=str(d)) for s, d in moves]
+    def plan(
+        self, req: SortRequest, reporter: ProgressReporter | None = None
+    ) -> list[MoveItem]:
+        strat = self._select(req.strategy)
+        pairs = strat.run(
+            self.root, Path(req.dst_root) if req.dst_root else None, reporter=reporter
+        )
+        return [MoveItem(src=str(s), dst=str(d)) for s, d in pairs]
 
-    def apply(self, req: SortRequest) -> list[MoveItem]:
-        plan_fn = self._select_plan(req.strategy)
-        moves = plan_fn(self.root, Path(req.dst_root) if req.dst_root else None)
-        for src, dst in moves:
+    def apply(
+        self, req: SortRequest, reporter: ProgressReporter | None = None
+    ) -> list[MoveItem]:
+        strat = self._select(req.strategy)
+        pairs = strat.run(
+            self.root, Path(req.dst_root) if req.dst_root else None, reporter=reporter
+        )
+        for src, dst in pairs:
             try:
                 if src.resolve() == dst.resolve():
                     continue
             except Exception:
                 pass
             self._safe_move(src, dst)
-        return [MoveItem(src=str(s), dst=str(d)) for s, d in moves]
+        return [MoveItem(src=str(s), dst=str(d)) for s, d in pairs]
 
 
 class RenameService(CleanupService):

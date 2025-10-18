@@ -91,38 +91,6 @@ class RemoveFoldersResponse(BaseModel):
     )
 
 
-class FindMarkedDupesRequest(BaseModel):
-    root: DirectoryPath = Field(
-        description="Root directory to scan recursively.",
-        example="/data/input",
-    )
-    suffix_pattern: str = Field(
-        r"_dupe\(\d+\)$",
-        description=(
-            "Regular expression applied to the filename **stem** (no extension). "
-            "Files whose stem matches are considered 'marked duplicates'."
-        ),
-        example=r"_dupe\(\d+\)$",
-    )
-
-
-class FindMarkedDupesResponse(BaseModel):
-    count: int = Field(
-        ge=0,
-        description="Number of files whose stem matched `suffix_pattern`.",
-        example=3,
-    )
-    paths: list[str] = Field(
-        default_factory=list,
-        description="Absolute paths of matched files.",
-        example=[
-            "/data/input/album/photo_dupe(1).jpg",
-            "/data/input/album/photo_dupe(2).jpg",
-            "/data/input/misc/IMG_1234_dupe(3).jpeg",
-        ],
-    )
-
-
 class SortStrategy(str, Enum):
     by_date = "by_date"
     by_location = "by_location"

@@ -1,10 +1,14 @@
 # src\vi_app\core\rich_progress.py
 from __future__ import annotations
 
-from typing import Dict
-
 from rich.console import Console
-from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn, TimeRemainingColumn
+from rich.progress import (
+    BarColumn,
+    Progress,
+    TaskProgressColumn,
+    TextColumn,
+    TimeRemainingColumn,
+)
 
 from vi_app.core.progress import Phase, ProgressReporter
 
@@ -14,8 +18,8 @@ class RichPhaseProgressReporter(ProgressReporter):
 
     def __init__(self, progress: Progress) -> None:
         self.progress = progress
-        self.tasks: Dict[str, int] = {}
-        self.totals: Dict[str, int | None] = {}
+        self.tasks: dict[str, int] = {}
+        self.totals: dict[str, int | None] = {}
         self.labels = {
             "scan": "Scanning",
             "hash": "Hashing",
@@ -25,7 +29,9 @@ class RichPhaseProgressReporter(ProgressReporter):
             "move": "Moving",
         }
 
-    def start(self, phase: Phase, total: int | None = None, text: str | None = None) -> None:
+    def start(
+        self, phase: Phase, total: int | None = None, text: str | None = None
+    ) -> None:
         label = self.labels.get(phase, str(phase).title())
         task_id = self.progress.add_task(label, total=total, detail=(text or ""))
         self.tasks[str(phase)] = task_id

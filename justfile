@@ -51,26 +51,18 @@ dedup:
 # -------------
 # CLEANUP
 # -------------
-# patterns: pass many like: patterns='-p "\.DS_Store$" -p "(?i)Thumbs\.db$"'
-cli-cleanup-remove-files path="" patterns="" prune="true" option="plan":
-    PRUNE_FLAG=$([ "{{prune}}" = "true" ] && echo --prune-empty || echo --no-prune-empty); \
-    uv run vi cleanup remove-files "{{path}}" {{patterns}} ${PRUNE_FLAG} --{{option}}
 
-# names: pass many like: names='-n duplicate -n tmp'
-cli-cleanup-remove-folders path="" names="-n duplicate" option="plan":
-    uv run vi cleanup remove-folders "{{path}}" {{names}} --{{option}}
+cleanup-remove-files:
+    uv run vi cleanup remove-files
 
-# suffix is regex on the filename *stem*
-cli-cleanup-find-marked-dupes path="" suffix="_dupe(\\d+)$":
-    uv run vi cleanup find-marked-dupes "{{path}}" --suffix "{{suffix}}" --plan
+cleanup-remove-folders:
+    uv run vi cleanup remove-folders
 
-# rename inside each (sub)directory to IMG_XXXXXX ordered by date taken
-cli-cleanup-rename:
+cleanup-rename:
     uv run vi cleanup rename
 
-# sort images by_date/by_location, mirroring into dst
-cli-cleanup-sort src="" dst="" strategy="by_date" option="plan":
-    uv run vi cleanup sort "{{src}}" --dst-root "{{dst}}" --strategy "{{strategy}}" --{{option}}
+cleanup-sort:
+    uv run vi cleanup sort
 
 # -------------
 # CONVERT

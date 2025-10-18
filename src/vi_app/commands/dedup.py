@@ -2,15 +2,15 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from vi_app.core.rich_progress import make_phase_progress
 from vi_app.commands.common import prompt_existing_dir, resolve_dry_run
+from vi_app.core.rich_progress import make_phase_progress
 from vi_app.modules.dedup.schemas import DedupRequest, DedupStrategy
 from vi_app.modules.dedup.service import DedupService
 
@@ -28,7 +28,11 @@ class DedupInteractiveRunner:
 
     # -------- prompts --------
     def _prompt_strategy(self) -> DedupStrategy:
-        choice = typer.prompt("strategy (content/metadata)", default="content").strip().lower()
+        choice = (
+            typer.prompt("strategy (content/metadata)", default="content")
+            .strip()
+            .lower()
+        )
         if choice not in {"content", "metadata"}:
             raise typer.BadParameter("strategy must be 'content' or 'metadata'")
         return DedupStrategy(choice)
@@ -59,7 +63,11 @@ class DedupInteractiveRunner:
         table.add_column("# Duplicates", justify="right")
         table.add_column("Duplicates", overflow="fold")
         for c in clusters:
-            table.add_row(c.keep, str(len(c.duplicates)), "\n".join(c.duplicates) if c.duplicates else "—")
+            table.add_row(
+                c.keep,
+                str(len(c.duplicates)),
+                "\n".join(c.duplicates) if c.duplicates else "—",
+            )
         self.console.print(table)
 
     # -------- main flow --------

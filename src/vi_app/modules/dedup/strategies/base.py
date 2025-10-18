@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 
 from vi_app.core.progress import ProgressReporter
+from vi_app.modules.dedup.schemas import DedupItem
 
 __all__ = [
     "DedupStrategyBase",
@@ -17,7 +18,9 @@ class DedupStrategyBase(ABC):
     """Strategy interface for dedup implementations."""
 
     @abstractmethod
-    def run(self, root: Path, reporter: ProgressReporter | None = None) -> list["DedupItem"]:
+    def run(
+        self, root: Path, reporter: ProgressReporter | None = None
+    ) -> list[DedupItem]:
         raise NotImplementedError
 
 
