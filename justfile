@@ -73,3 +73,9 @@ convert-folder-to-jpeg:
 
 convert-webp-to-jpeg:
     uv run vi convert webp-to-jpeg
+
+convert-folder-to-mp4:
+    uv run vi convert folder-to-mp4
+
+benchmark:
+    uv run vi convert benchmark-mp4

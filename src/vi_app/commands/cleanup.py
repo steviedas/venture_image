@@ -191,8 +191,6 @@ class RenameRunner:
         self.console = Console()
 
     def _progress(self) -> Progress:
-        # Local import to avoid issues if this module loads before Rich is available
-
         return Progress(
             TextColumn("[bold]{task.description}"),
             BarColumn(),

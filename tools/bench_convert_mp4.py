@@ -60,9 +60,7 @@ CUDA_DECODE_VARIANTS = [False, True]
 
 
 def which(bin_name: str) -> str | None:
-    from shutil import which as _which
-
-    return _which(bin_name)
+    return which(bin_name)
 
 
 def ffmpeg_has_nvenc(ffmpeg_bin: str = "ffmpeg") -> bool:

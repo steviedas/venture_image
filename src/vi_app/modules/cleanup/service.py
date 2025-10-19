@@ -12,6 +12,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from PIL import Image
+from pillow_heif import register_heif_opener
 
 from vi_app.core.errors import BadRequest
 from vi_app.core.paths import ensure_within_root
@@ -61,8 +62,6 @@ class CleanupService:
         if cls._HEIF_REGISTERED:
             return
         try:
-            from pillow_heif import register_heif_opener  # type: ignore
-
             register_heif_opener()
             cls._HEIF_REGISTERED = True
         except Exception:
