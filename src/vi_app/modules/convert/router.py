@@ -32,11 +32,10 @@ def webp_to_jpeg(req: WebpToJpegRequest) -> list[ConversionResult]:
             only_exts={".webp"},
             dry_run=req.dry_run,
         )
-        targets = svc.enumerate_targets()
         results = (
-            [(s, d, True, "dry_run") for s, d in targets]
+            [(s, d, True, "dry_run") for s, d in svc.plan()]
             if req.dry_run
-            else list(svc.iter_apply(targets=targets))
+            else svc.apply()
         )
         return [
             ConversionResult(src=str(src), dst=str(dst), converted=ok, reason=reason)
@@ -63,11 +62,10 @@ def folder_to_jpeg(req: ConvertFolderRequest) -> list[ConversionResult]:
             only_exts=None,
             dry_run=req.dry_run,
         )
-        targets = svc.enumerate_targets()
         results = (
-            [(s, d, True, "dry_run") for s, d in targets]
+            [(s, d, True, "dry_run") for s, d in svc.plan()]
             if req.dry_run
-            else list(svc.iter_apply(targets=targets))
+            else svc.apply()
         )
         return [
             ConversionResult(src=str(src), dst=str(dst), converted=ok, reason=reason)

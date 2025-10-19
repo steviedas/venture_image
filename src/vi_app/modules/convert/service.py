@@ -7,6 +7,7 @@ from pathlib import Path
 
 from PIL import Image, ImageCms
 
+from vi_app.core.progress import ProgressReporter
 from vi_app.modules.cleanup.service import CleanupService  # reuse base: HEIF + workers
 
 try:
@@ -66,26 +67,32 @@ class ConvertService(CleanupService):
         self.dry_run = dry_run
 
     # ---------- planning ----------
-    def _iter_images(self) -> Iterable[Path]:
-        if self.recurse:
-            yield from (
-                p
-                for p in self.src_root.rglob("*")
-                if p.is_file() and p.suffix.lower() in self.only_exts
-            )
-        else:
-            yield from (
-                p
-                for p in self.src_root.iterdir()
-                if p.is_file() and p.suffix.lower() in self.only_exts
-            )
+    def _iter_images(self, reporter: ProgressReporter | None = None) -> Iterable[Path]:
+        """Yield source images, optionally reporting 'scan' progress."""
+        it = (
+            (p for p in self.src_root.rglob("*"))
+            if self.recurse
+            else (p for p in self.src_root.iterdir())
+        )
+        for p in it:
+            if p.is_file() and p.suffix.lower() in self.only_exts:
+                if reporter:
+                    reporter.update("scan", 1, text=p.name)
+                yield p
 
-    def enumerate_targets(self) -> list[tuple[Path, Path]]:
+    def enumerate_targets(
+        self, reporter: ProgressReporter | None = None
+    ) -> list[tuple[Path, Path]]:
+        """Plan conversions as (src, dst) pairs and optionally report 'scan' start/end."""
+        if reporter:
+            reporter.start("scan", total=None, text="Discovering images…")
         pairs: list[tuple[Path, Path]] = []
-        for src in self._iter_images():
+        for src in self._iter_images(reporter=reporter):
             new_name = sanitize_filename(src.stem) + ".jpeg"
             dst = mirrored_output_path(src, self.src_root, self.dst_root, new_name)
             pairs.append((src, dst))
+        if reporter:
+            reporter.end("scan")
         return pairs
 
     # ---------- single conversion ----------
@@ -148,6 +155,11 @@ class ConvertService(CleanupService):
                 return False, "heic_not_supported"
             return False, f"error:{e.__class__.__name__}"
 
+    # ---------- high-level facade (mirrors DedupService style) ----------
+    def plan(self, reporter: ProgressReporter | None = None) -> list[tuple[Path, Path]]:
+        """Public plan API (phase-aware)."""
+        return self.enumerate_targets(reporter=reporter)
+
     # ---------- apply (parallel) ----------
     def iter_apply(
         self,
@@ -185,5 +197,22 @@ class ConvertService(CleanupService):
                     on_progress(1)
                 yield (src, dst, ok, reason)
 
-    def apply(self) -> list[tuple[Path, Path, bool, str | None]]:
-        return list(self.iter_apply())
+    def apply(
+        self, reporter: ProgressReporter | None = None
+    ) -> list[tuple[Path, Path, bool, str | None]]:
+        """Public apply API (phase-aware)."""
+        targets = self.enumerate_targets(reporter=reporter)
+        total = len(targets)
+        if reporter:
+            reporter.start("convert", total=total, text="Converting to JPEG…")
+
+        results: list[tuple[Path, Path, bool, str | None]] = []
+        for src, dst, ok, reason in self.iter_apply(
+            targets=targets,
+            on_progress=(lambda n: reporter.update("convert", n) if reporter else None),
+        ):
+            results.append((src, dst, ok, reason))
+
+        if reporter:
+            reporter.end("convert")
+        return results
