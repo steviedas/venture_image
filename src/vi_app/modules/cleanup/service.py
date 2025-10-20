@@ -15,6 +15,8 @@ from PIL import Image
 from pillow_heif import register_heif_opener
 
 from vi_app.core.errors import BadRequest
+from vi_app.core.media_types import IMAGE_EXTS as _IMAGE_EXTS
+from vi_app.core.media_types import VIDEO_EXTS as _VIDEO_EXTS
 from vi_app.core.paths import ensure_within_root
 from vi_app.core.progress import ProgressReporter
 
@@ -33,21 +35,8 @@ from .strategies.by_location import SortByLocationStrategy
 class CleanupService:
     """Base class with shared helpers; no module-level functions."""
 
-    IMAGE_EXTS = {
-        ".jpg",
-        ".jpeg",
-        ".png",
-        ".tif",
-        ".tiff",
-        ".bmp",
-        ".webp",
-        ".heic",
-        ".heif",
-        ".gif",
-    }
-
-    # NEW: supported video formats
-    VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".wmv", ".3gp", ".webm"}
+    IMAGE_EXTS = _IMAGE_EXTS
+    VIDEO_EXTS = _VIDEO_EXTS
 
     _HEIF_REGISTERED = False  # lazy, best-effort
 
@@ -347,33 +336,27 @@ class RenameService(CleanupService):
         pairs: list[tuple[Path, Path]] = []
         for idx, (_, p) in enumerate(results, start=1):
             seq = f"{idx:0{self.zero_pad}d}"
-            new_name = f"IMG_{seq}{p.suffix.upper()}"
+            # Preserve original extension; normalize to lowercase to match your example
+            new_name = f"IMG_{seq}{p.suffix.lower()}"
             pairs.append((p, dir_path / new_name))
         return pairs
 
-    # NEW: plan video names per format (per directory)
     def _sequence_video_names(
         self, dir_path: Path, files: list[Path], zero_pad: int
     ) -> list[tuple[Path, Path]]:
         """
-        Group by file extension and create sequences per format:
-        VID_000001.MP4, VID_000002.MP4, … and separately VID_000001.MOV, …
-        Order within a format is by earliest filesystem datetime, then name.
+        Create a single sequence across ALL video formats in this directory.
+        Order is by earliest filesystem datetime, then name.
         """
-        groups: dict[str, list[Path]] = {}
-        for p in files:
-            groups.setdefault(p.suffix.lower(), []).append(p)
-
+        items = sorted(
+            ((self._filesystem_earliest_dt(p), p) for p in files),
+            key=lambda t: (t[0], t[1].name.lower()),
+        )
         pairs: list[tuple[Path, Path]] = []
-        for _ext, group in sorted(groups.items()):
-            items = sorted(
-                ((self._filesystem_earliest_dt(p), p) for p in group),
-                key=lambda t: (t[0], t[1].name.lower()),
-            )
-            for idx, (_, p) in enumerate(items, start=1):
-                seq = f"{idx:0{zero_pad}d}"
-                new_name = f"VID_{seq}{p.suffix.upper()}"
-                pairs.append((p, dir_path / new_name))
+        for idx, (_, p) in enumerate(items, start=1):
+            seq = f"{idx:0{zero_pad}d}"
+            new_name = f"VID_{seq}{p.suffix.lower()}"
+            pairs.append((p, dir_path / new_name))
         return pairs
 
     def plan(

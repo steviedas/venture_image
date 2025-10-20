@@ -5,23 +5,14 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from pathlib import Path
 
+from vi_app.core.media_types import IMAGE_EXTS
 from vi_app.core.progress import ProgressReporter
 
 
 class SortStrategyBase(ABC):
     """DRY base for cleanup sorting strategies."""
 
-    exts = {
-        ".jpg",
-        ".jpeg",
-        ".png",
-        ".webp",
-        ".tif",
-        ".tiff",
-        ".bmp",
-        ".heic",
-        ".heif",
-    }
+    exts = IMAGE_EXTS
 
     def iter_images(
         self, root: Path, reporter: ProgressReporter | None = None

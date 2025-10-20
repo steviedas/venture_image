@@ -224,7 +224,9 @@ class RenameRunner:
         if img_total == 0:
             self.console.print("No images to rename.", style="dim")
         else:
-            typer.echo(f"[PLAN] images: {img_total} file(s) will be renamed")
+            typer.echo(
+                f"[PLAN] images (all formats): {img_total} file(s) will be renamed"
+            )
             if self.dry_run:
                 for src, dst in img_targets:
                     typer.echo(f"{src} -> {dst}")
@@ -232,7 +234,9 @@ class RenameRunner:
         if vid_total == 0:
             self.console.print("No videos to rename.", style="dim")
         else:
-            typer.echo(f"[PLAN] videos: {vid_total} file(s) will be renamed")
+            typer.echo(
+                f"[PLAN] videos (all formats): {vid_total} file(s) will be renamed"
+            )
             if self.dry_run:
                 for src, dst in vid_targets:
                     typer.echo(f"{src} -> {dst}")
